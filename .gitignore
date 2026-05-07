@@ -1,0 +1,15 @@
+.DS_Store
+build/
+Builds/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+JuceLibraryCode/
+*.component
+*.vst3
+*.appex
+*.dSYM/
+*.log
