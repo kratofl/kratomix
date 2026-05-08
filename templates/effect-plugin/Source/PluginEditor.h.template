@@ -1,0 +1,33 @@
+#pragma once
+
+#include <JuceHeader.h>
+
+#include "PluginProcessor.h"
+
+namespace kratomix
+{
+class EffectPluginAudioProcessorEditor final : public juce::AudioProcessorEditor
+{
+public:
+    explicit EffectPluginAudioProcessorEditor(EffectPluginAudioProcessor&);
+    ~EffectPluginAudioProcessorEditor() override = default;
+
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+private:
+    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+
+    EffectPluginAudioProcessor& pluginProcessor;
+
+    juce::Label titleLabel;
+    juce::Slider trimSlider;
+    juce::ToggleButton bypassButton;
+
+    std::unique_ptr<SliderAttachment> trimAttachment;
+    std::unique_ptr<ButtonAttachment> bypassAttachment;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectPluginAudioProcessorEditor)
+};
+}

@@ -1,9 +1,11 @@
 .DS_Store
 build/
 Builds/
+.worktrees/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
+plugins/*/build/
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/

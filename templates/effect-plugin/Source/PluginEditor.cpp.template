@@ -1,0 +1,64 @@
+#include "PluginEditor.h"
+
+namespace
+{
+constexpr auto trimId = "trim";
+constexpr auto bypassId = "bypass";
+}
+
+namespace kratomix
+{
+EffectPluginAudioProcessorEditor::EffectPluginAudioProcessorEditor(EffectPluginAudioProcessor& processorToEdit)
+    : AudioProcessorEditor(&processorToEdit),
+      pluginProcessor(processorToEdit)
+{
+    titleLabel.setText("__PRODUCT_NAME__", juce::dontSendNotification);
+    titleLabel.setJustificationType(juce::Justification::centred);
+    titleLabel.setFont(juce::FontOptions(24.0f, juce::Font::bold));
+    addAndMakeVisible(titleLabel);
+
+    trimSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    trimSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 72, 24);
+    trimSlider.setDoubleClickReturnValue(true, 0.0);
+    trimSlider.setTextValueSuffix("");
+    trimSlider.textFromValueFunction = [](double value)
+    {
+        return juce::String(value, 1);
+    };
+    trimSlider.valueFromTextFunction = [](const juce::String& text)
+    {
+        return text.getDoubleValue();
+    };
+    addAndMakeVisible(trimSlider);
+
+    bypassButton.setButtonText("Bypass");
+    addAndMakeVisible(bypassButton);
+
+    trimAttachment = std::make_unique<SliderAttachment>(pluginProcessor.parameters, trimId, trimSlider);
+    bypassAttachment = std::make_unique<ButtonAttachment>(pluginProcessor.parameters, bypassId, bypassButton);
+
+    setSize(420, 180);
+}
+
+void EffectPluginAudioProcessorEditor::paint(juce::Graphics& g)
+{
+    g.fillAll(juce::Colour::fromRGB(24, 24, 28));
+    g.setColour(juce::Colour::fromRGB(42, 42, 48));
+    g.fillRoundedRectangle(getLocalBounds().toFloat().reduced(12.0f), 8.0f);
+}
+
+void EffectPluginAudioProcessorEditor::resized()
+{
+    auto bounds = getLocalBounds().reduced(20);
+
+    titleLabel.setBounds(bounds.removeFromTop(32));
+    bounds.removeFromTop(12);
+
+    auto controls = bounds.removeFromTop(96);
+    auto trimArea = controls.removeFromLeft(140);
+
+    trimSlider.setBounds(trimArea);
+
+    bypassButton.setBounds(bounds.removeFromLeft(110).withHeight(28).withCentre(controls.getCentre()));
+}
+}

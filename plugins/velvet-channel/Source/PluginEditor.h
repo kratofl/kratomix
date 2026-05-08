@@ -2,7 +2,11 @@
 
 #include <JuceHeader.h>
 
+#include "ControlValues.h"
 #include "PluginProcessor.h"
+#include "Ui/RackLookAndFeel.h"
+#include "Ui/SteppedSlider.h"
+#include "Ui/VuMeter.h"
 
 namespace kratomix
 {
@@ -16,19 +20,28 @@ public:
     void resized() override;
 
 private:
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
 
-    void configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& text);
+    void configureSlider(juce::Slider& slider,
+                         juce::Label& label,
+                         const juce::String& text,
+                         std::function<juce::String(double)> formatter,
+                         std::function<double(const juce::String&)> parser,
+                         double doubleClickValue);
 
-    VelvetChannelAudioProcessor& processor;
+    VelvetChannelAudioProcessor& audioProcessor;
+    ui::RackLookAndFeel rackLookAndFeel;
 
-    juce::Slider inputSlider;
-    juce::Slider driveSlider;
-    juce::Slider highPassSlider;
-    juce::Slider warmthSlider;
-    juce::Slider presenceSlider;
-    juce::Slider airSlider;
-    juce::Slider outputSlider;
+    ui::SteppedSlider inputSlider;
+    ui::SteppedSlider driveSlider;
+    ui::SteppedSlider highPassSlider;
+    ui::SteppedSlider warmthSlider;
+    ui::SteppedSlider presenceSlider;
+    ui::SteppedSlider airSlider;
+    ui::SteppedSlider outputSlider;
+    juce::ToggleButton bypassButton { "BYPASS" };
+    ui::VuMeter vuMeter;
 
     juce::Label inputLabel;
     juce::Label driveLabel;
@@ -38,6 +51,7 @@ private:
     juce::Label airLabel;
     juce::Label outputLabel;
 
+    ButtonAttachment bypassAttachment;
     SliderAttachment inputAttachment;
     SliderAttachment driveAttachment;
     SliderAttachment highPassAttachment;

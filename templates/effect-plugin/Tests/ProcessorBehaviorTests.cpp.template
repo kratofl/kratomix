@@ -1,0 +1,43 @@
+#include <JuceHeader.h>
+
+#include "Source/PluginProcessor.h"
+
+namespace
+{
+void expect(bool condition, const juce::String& message, int& failures)
+{
+    if (condition)
+        return;
+
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+}
+}
+
+int main()
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    int failures = 0;
+
+    kratomix::EffectPluginAudioProcessor processor;
+
+    expect(processor.parameters.getParameter("trim") != nullptr,
+           "Trim parameter should exist",
+           failures);
+    expect(processor.parameters.getParameter("bypass") != nullptr,
+           "Bypass parameter should exist",
+           failures);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+    expect(editor != nullptr,
+           "Editor should be constructible",
+           failures);
+
+    if (failures == 0)
+    {
+        std::cout << "All tests passed\n";
+        return 0;
+    }
+
+    return 1;
+}

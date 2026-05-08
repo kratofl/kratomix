@@ -1,45 +1,63 @@
-# Kratomix Velvet Channel
+# Kratomix
 
-Kratomix Velvet Channel is a JUCE-based macOS audio effect plugin for Logic Pro. It starts as a warm channel-strip style processor with input drive, subtle harmonic color, musical EQ shaping, and output trim.
+Kratomix is a JUCE-based plugin monorepo for Logic Pro-first audio effects on macOS. The root repo now carries the shared CMake/Make tooling, plugin metadata contract, and template generator for the full Kratomix line.
 
-## Controls
+## Layout
 
-- **Input**: level into the color stage.
-- **Drive**: harmonic warmth amount.
-- **High-pass**: low-end cleanup before tone shaping.
-- **Warmth**: low shelf around the body range.
-- **Presence**: broad mid lift or cut.
-- **Air**: high shelf for top-end openness.
-- **Output**: final gain compensation.
+- `core/cmake/`: shared JUCE and plugin registration helpers.
+- `plugins/velvet-channel/`: the current production plugin.
+- `templates/effect-plugin/`: neutral starter template for future plugins.
+- `tools/new-plugin.py`: generator behind `make new-plugin`.
+- `mk/*.mk`: root GNU Make command layer.
 
-## Build
+## Commands
 
 Requirements:
 
 - macOS with Xcode command line tools.
 - CMake 3.22 or newer.
-- JUCE 8, either fetched by CMake or supplied locally.
+- GNU Make.
+- JUCE 8, either fetched by CMake or supplied through `JUCE_DIR`.
 
-Fetch JUCE automatically:
+List registered plugins:
 
 ```bash
-cmake -S . -B build -G Xcode
-cmake --build build --config Release
+make list
+```
+
+Configure and build everything with the default `Unix Makefiles` generator:
+
+```bash
+make build
+make test
+```
+
+Build, test, run, or validate a single plugin:
+
+```bash
+make build PLUGIN=velvet-channel
+make test PLUGIN=velvet-channel
+make run PLUGIN=velvet-channel
+make validate PLUGIN=velvet-channel
 ```
 
 Use a local JUCE checkout:
 
 ```bash
-cmake -S . -B build -G Xcode -DJUCE_DIR=/path/to/JUCE
-cmake --build build --config Release
+make build JUCE_DIR=/path/to/JUCE
 ```
 
-JUCE copies the built AU component after build when possible. If Logic Pro does not show it, validate the AU and restart Logic:
+Scaffold a new plugin from the shared template:
 
 ```bash
-auval -v aufx VChn Kmix
+make new-plugin SLUG=tape-bloom NAME="Kratomix Tape Bloom" CODE=TBlo
 ```
 
-## Project Line
+## Plugins
 
-The shared plugin prefix is **Kratomix**. Future plugins can use the same pattern, for example `Kratomix Tape Bloom`, `Kratomix Iron Bus`, or `Kratomix ClearComp`.
+- `Kratomix Velvet Channel`: warm source-track strip with stepped EQ color, harmonic drive, hardware-style bypass, and a central VU meter. See [plugins/velvet-channel/README.md](/Users/kratofl/Projects/kratomix/plugins/velvet-channel/README.md).
+
+## Notes
+
+- `plugins/<slug>/plugin.cmake` is the single source of truth for product name, bundle ID, and AU codes.
+- The root Make layer is a command wrapper over CMake and the generator script, not a second build system.

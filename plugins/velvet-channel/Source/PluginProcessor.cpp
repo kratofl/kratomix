@@ -71,6 +71,11 @@ void VelvetChannelAudioProcessor::setStateInformation(const void* data, int size
         parameters.replaceState(juce::ValueTree::fromXml(*xml));
 }
 
+float VelvetChannelAudioProcessor::getVuLevel() const noexcept
+{
+    return warmthProcessor.getVuLevel();
+}
+
 WarmthSettings VelvetChannelAudioProcessor::readSettings() const
 {
     WarmthSettings current;
@@ -82,6 +87,7 @@ WarmthSettings VelvetChannelAudioProcessor::readSettings() const
     current.presenceDb = parameters.getRawParameterValue(ParamID::presence)->load();
     current.airDb = parameters.getRawParameterValue(ParamID::air)->load();
     current.outputGainDb = parameters.getRawParameterValue(ParamID::outputGain)->load();
+    current.bypassed = parameters.getRawParameterValue(ParamID::bypass)->load() >= 0.5f;
 
     return current;
 }

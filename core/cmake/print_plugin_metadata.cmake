@@ -1,0 +1,89 @@
+cmake_minimum_required(VERSION 3.22)
+
+if(NOT DEFINED KRATOMIX_ROOT)
+    message(FATAL_ERROR "Set KRATOMIX_ROOT to the monorepo root")
+endif()
+
+if(NOT DEFINED KRATOMIX_PLUGIN_SLUG)
+    message(FATAL_ERROR "Set KRATOMIX_PLUGIN_SLUG to a plugin slug")
+endif()
+
+if(NOT DEFINED KRATOMIX_BUILD_DIR)
+    set(KRATOMIX_BUILD_DIR "${KRATOMIX_ROOT}/build")
+endif()
+
+if(NOT DEFINED KRATOMIX_BUILD_CONFIG)
+    set(KRATOMIX_BUILD_CONFIG "")
+endif()
+
+set(plugin_file "${KRATOMIX_ROOT}/plugins/${KRATOMIX_PLUGIN_SLUG}/plugin.cmake")
+
+if(NOT EXISTS "${plugin_file}")
+    message(FATAL_ERROR "Unknown plugin slug '${KRATOMIX_PLUGIN_SLUG}'")
+endif()
+
+set(KRATOMIX_METADATA_ONLY ON)
+include("${plugin_file}")
+
+if(NOT DEFINED KRATOMIX_PLUGIN_FORMATS)
+    set(KRATOMIX_PLUGIN_FORMATS)
+endif()
+
+if(NOT DEFINED KRATOMIX_PLUGIN_TEST_SOURCES)
+    set(KRATOMIX_PLUGIN_TEST_SOURCES)
+endif()
+
+set(has_au 0)
+set(has_standalone 0)
+set(config_directory "")
+
+if(KRATOMIX_BUILD_CONFIG)
+    set(config_directory "/${KRATOMIX_BUILD_CONFIG}")
+endif()
+
+foreach(plugin_format IN LISTS KRATOMIX_PLUGIN_FORMATS)
+    if(plugin_format STREQUAL "AU")
+        set(has_au 1)
+    elseif(plugin_format STREQUAL "Standalone")
+        set(has_standalone 1)
+    endif()
+endforeach()
+
+set(standalone_target "")
+set(standalone_app "")
+if(has_standalone)
+    set(standalone_target "plugin-${KRATOMIX_PLUGIN_SLUG}-standalone")
+    set(standalone_app "${KRATOMIX_BUILD_DIR}/${KRATOMIX_CMAKE_TARGET}_artefacts${config_directory}/Standalone/${KRATOMIX_PRODUCT_NAME}.app")
+endif()
+
+set(au_target "")
+if(has_au)
+    set(au_target "plugin-${KRATOMIX_PLUGIN_SLUG}-au")
+endif()
+
+set(test_target "")
+if(KRATOMIX_PLUGIN_TEST_SOURCES)
+    set(test_target "test-${KRATOMIX_PLUGIN_SLUG}")
+endif()
+
+function(print_assignment key value)
+    string(REPLACE "\\" "\\\\" escaped "${value}")
+    string(REPLACE "\"" "\\\"" escaped "${escaped}")
+    string(REPLACE "$" "\\$" escaped "${escaped}")
+    message("${key}=\"${escaped}\"")
+endfunction()
+
+print_assignment("slug" "${KRATOMIX_PLUGIN_SLUG}")
+print_assignment("cmake_target" "${KRATOMIX_CMAKE_TARGET}")
+print_assignment("product_name" "${KRATOMIX_PRODUCT_NAME}")
+print_assignment("bundle_id" "${KRATOMIX_BUNDLE_ID}")
+print_assignment("manufacturer_code" "${KRATOMIX_PLUGIN_MANUFACTURER_CODE}")
+print_assignment("plugin_code" "${KRATOMIX_PLUGIN_CODE}")
+print_assignment("au_main_type" "${KRATOMIX_AU_MAIN_TYPE}")
+print_assignment("build_target" "plugin-${KRATOMIX_PLUGIN_SLUG}")
+print_assignment("test_target" "${test_target}")
+print_assignment("standalone_target" "${standalone_target}")
+print_assignment("standalone_app" "${standalone_app}")
+print_assignment("au_target" "${au_target}")
+print_assignment("has_au" "${has_au}")
+print_assignment("has_standalone" "${has_standalone}")

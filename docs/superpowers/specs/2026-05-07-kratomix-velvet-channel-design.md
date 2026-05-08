@@ -2,30 +2,36 @@
 
 ## Goal
 
-Create the first Kratomix plugin workspace: a JUCE-based macOS Audio Unit effect for Logic Pro that adds warm harmonic color and simple musical EQ shaping.
+Create the first Kratomix plugin workspace as a JUCE-based macOS Audio Unit effect for Logic Pro, tuned for source tracks with a thick, forward preamp-style color and a rack-inspired interface.
 
 ## Product
 
-The shared plugin line prefix is **Kratomix**. This plugin is named **Kratomix Velvet Channel** and lives at `/Users/kratofl/projects/kratomix/velvet-channel`.
+The shared plugin line prefix is **Kratomix**. This plugin is named **Kratomix Velvet Channel** and lives at `/Users/kratofl/Projects/kratomix/velvet-channel`.
 
 ## Architecture
 
-The project uses CMake and JUCE. `PluginProcessor` owns host integration, parameter state, bus validation, preset serialization, and block processing. `WarmthProcessor` owns all tone processing so the DSP can evolve independently from UI and host code. `PluginEditor` provides a compact channel-strip control surface for the first version.
+The project uses CMake and JUCE. `PluginProcessor` owns host integration, parameter state, bus validation, preset serialization, meter access, and block processing. `WarmthProcessor` owns stepped control mapping, smoothing, bypass behavior, tone processing, and VU feed generation. `PluginEditor` owns the fixed rack-style front panel, hardware-like controls, and VU presentation.
 
 ## DSP
 
 The signal path is:
 
-1. Input gain.
-2. Gentle waveshaping with mild even-order color.
-3. High-pass filter.
-4. Low shelf warmth.
-5. Broad presence band.
-6. High shelf air.
-7. Output gain.
+1. Bypass crossfade.
+2. Input trim.
+3. Saturating drive stage with asymmetric warmth.
+4. Stepped high-pass filter.
+5. Stepped low shelf warmth.
+6. Stepped presence bell.
+7. Stepped high shelf air.
+8. Output trim.
+9. Post-output VU feed.
 
-The first version prioritizes stable, musical defaults and a clear extension point for future oversampling, metering, presets, or component-model refinements.
+`Drive`, `HPF`, `Warmth`, `Presence`, and `Air` are intentionally quantized to musical hardware-style steps. Input and output remain continuous. Gain and wet-state changes are smoothed to avoid clicks during playback and automation.
+
+## UI
+
+The first version uses a fixed-size rack panel around `940 x 320 px`. The front plate is neo-orange metallic with brushed shading, dark screws, black hardware knobs, engraved labels, a black italic `Kratomix` wordmark, and a central analog-style VU meter.
 
 ## Build And Verification
 
-The project should configure with CMake and JUCE 8, then build AU, VST3, and Standalone targets on macOS. Logic Pro support is through the AU target. AU validation uses `auval -v aufx VChn Kmix`.
+The project configures with CMake and JUCE 8 and should build the test target plus AU and Standalone targets on macOS. Logic Pro support is through the AU target. Validation uses the standalone test executable and `auval -v aufx VChn Kmix`.

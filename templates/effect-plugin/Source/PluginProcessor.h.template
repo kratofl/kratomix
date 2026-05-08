@@ -2,16 +2,13 @@
 
 #include <JuceHeader.h>
 
-#include "Dsp/WarmthProcessor.h"
-#include "Parameters.h"
-
 namespace kratomix
 {
-class VelvetChannelAudioProcessor final : public juce::AudioProcessor
+class EffectPluginAudioProcessor final : public juce::AudioProcessor
 {
 public:
-    VelvetChannelAudioProcessor();
-    ~VelvetChannelAudioProcessor() override = default;
+    EffectPluginAudioProcessor();
+    ~EffectPluginAudioProcessor() override = default;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -21,7 +18,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return JucePlugin_Name; }
+    const juce::String getName() const override { return "__PRODUCT_NAME__"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -39,10 +36,10 @@ public:
     juce::AudioProcessorValueTreeState parameters;
 
 private:
-    WarmthSettings readSettings() const;
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    WarmthProcessor warmthProcessor;
+    juce::LinearSmoothedValue<float> trimGain;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VelvetChannelAudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectPluginAudioProcessor)
 };
 }
