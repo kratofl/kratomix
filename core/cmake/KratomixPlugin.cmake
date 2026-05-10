@@ -1,5 +1,10 @@
 include_guard(GLOBAL)
 
+get_filename_component(KRATOMIX_CORE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+set(KRATOMIX_CORE_UI_SOURCES
+    "${KRATOMIX_CORE_DIR}/ui/RackLookAndFeel.cpp"
+    "${KRATOMIX_CORE_DIR}/ui/VuMeter.cpp")
+
 function(kratomix_append_global property_name value)
     set_property(GLOBAL APPEND PROPERTY "${property_name}" "${value}")
 endfunction()
@@ -39,7 +44,7 @@ function(kratomix_add_plugin)
         list(APPEND source_files "${KRATOMIX_SOURCE_DIR}/${source_file}")
     endforeach()
 
-    set(include_dirs "${KRATOMIX_SOURCE_DIR}")
+    set(include_dirs "${KRATOMIX_SOURCE_DIR}" "${KRATOMIX_CORE_DIR}")
     foreach(include_dir IN LISTS KRATOMIX_INCLUDE_DIRS)
         if(IS_ABSOLUTE "${include_dir}")
             list(APPEND include_dirs "${include_dir}")
@@ -66,7 +71,8 @@ function(kratomix_add_plugin)
 
     target_sources(${KRATOMIX_TARGET}
         PRIVATE
-            ${source_files})
+            ${source_files}
+            ${KRATOMIX_CORE_UI_SOURCES})
 
     target_include_directories(${KRATOMIX_TARGET}
         PRIVATE
@@ -123,7 +129,8 @@ function(kratomix_add_plugin)
         target_sources(${test_target}
             PRIVATE
                 ${test_source_files}
-                ${source_files})
+                ${source_files}
+                ${KRATOMIX_CORE_UI_SOURCES})
 
         target_include_directories(${test_target}
             PRIVATE

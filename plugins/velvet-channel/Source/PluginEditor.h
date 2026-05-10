@@ -4,9 +4,9 @@
 
 #include "ControlValues.h"
 #include "PluginProcessor.h"
-#include "Ui/RackLookAndFeel.h"
-#include "Ui/SteppedSlider.h"
-#include "Ui/VuMeter.h"
+#include "ui/RackLookAndFeel.h"
+#include "ui/SteppedSlider.h"
+#include "ui/VuMeter.h"
 
 namespace kratomix
 {

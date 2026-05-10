@@ -1,23 +1,25 @@
-set(KRATOMIX_PLUGIN_SLUG "velvet-channel")
-set(KRATOMIX_CMAKE_TARGET "KratomixVelvetChannel")
-set(KRATOMIX_PRODUCT_NAME "Kratomix Velvet Channel")
-set(KRATOMIX_BUNDLE_ID "com.kratomix.velvetchannel")
+set(KRATOMIX_PLUGIN_SLUG "prism-eq")
+set(KRATOMIX_CMAKE_TARGET "KratomixPrismEq")
+set(KRATOMIX_PRODUCT_NAME "Kratomix Prism EQ")
+set(KRATOMIX_BUNDLE_ID "com.kratomix.prismeq")
 set(KRATOMIX_PLUGIN_MANUFACTURER_CODE "Kmix")
-set(KRATOMIX_PLUGIN_CODE "VChn")
+set(KRATOMIX_PLUGIN_CODE "PrD2")
 set(KRATOMIX_AU_MAIN_TYPE "aufx")
 set(KRATOMIX_PLUGIN_FORMATS
     AU
     VST3
     Standalone)
 set(KRATOMIX_PLUGIN_SOURCES
-    Source/ControlValues.h
     Source/Parameters.h
     Source/PluginProcessor.h
     Source/PluginProcessor.cpp
     Source/PluginEditor.h
     Source/PluginEditor.cpp
-    Source/Dsp/WarmthProcessor.h
-    Source/Dsp/WarmthProcessor.cpp)
+    Source/Dsp/PrismProcessor.h
+    Source/Dsp/PrismProcessor.cpp
+    Source/Ui/AnalyzerFeatures.h
+    Source/Ui/PrismGraph.h
+    Source/Ui/PrismGraph.cpp)
 set(KRATOMIX_PLUGIN_TEST_SOURCES
     Tests/ProcessorBehaviorTests.cpp)
 set(KRATOMIX_PLUGIN_INCLUDE_DIRS

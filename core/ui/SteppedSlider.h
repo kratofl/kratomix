@@ -6,6 +6,8 @@
 
 namespace kratomix::ui
 {
+inline constexpr bool isSharedUiHeader = true;
+
 class SteppedSlider final : public juce::Slider
 {
 public:

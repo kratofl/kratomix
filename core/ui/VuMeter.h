@@ -11,7 +11,7 @@ class VuMeter final : public juce::Component, private juce::Timer
 public:
     explicit VuMeter(std::function<float()> levelReader);
 
-    void paint(juce::Graphics& g) override;
+    void paint(juce::Graphics&) override;
 
 private:
     void timerCallback() override;

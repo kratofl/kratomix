@@ -4,6 +4,7 @@
 #include "Source/PluginProcessor.h"
 #include "Source/Dsp/WarmthProcessor.h"
 #include "Source/Parameters.h"
+#include "ui/SteppedSlider.h"
 
 namespace
 {
@@ -107,6 +108,16 @@ int main()
 
         expect(state.getParameter("bypass") != nullptr,
                "Parameter layout should expose a bypass parameter",
+               failures);
+    }
+
+    {
+        expect(kratomix::ui::isSharedUiHeader,
+               "SteppedSlider should come from the shared core UI header",
+               failures);
+        kratomix::ui::SteppedSlider slider([](double value) { return std::round(value); });
+        expect(std::abs(slider.snapValue(2.7, juce::Slider::notDragging) - 3.0) < 1.0e-6,
+               "Shared SteppedSlider should be available from core UI include paths",
                failures);
     }
 
