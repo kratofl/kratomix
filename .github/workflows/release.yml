@@ -1,0 +1,65 @@
+# .github/workflows/release.yml
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: brew install cmake
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package plugins
+        run: |
+          mkdir -p zips
+          for plugin_dir in plugins/*/; do
+            slug=$(basename "$plugin_dir")
+            mkdir -p "dist/$slug"
+
+            # AU and VST3
+            find build -name "*.component" -path "*$slug*" | while read f; do
+              cp -r "$f" "dist/$slug/"
+            done
+            find build -name "*.vst3" -path "*$slug*" | while read f; do
+              cp -r "$f" "dist/$slug/"
+            done
+
+            # Zip if not empty
+            if [ "$(ls -A dist/$slug)" ]; then
+              cd dist
+              zip -r "../zips/$slug-${{ github.ref_name }}-macOS.zip" "$slug/"
+              cd ..
+              echo "Packaged: $slug"
+            else
+              echo "No build artifacts found for: $slug"
+            fi
+          done
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: zips/*.zip
+          generate_release_notes: true
+          body: |
+            ## Installation
+            1. Unzip the downloaded file
+            2. `.component` → `~/Library/Audio/Plug-Ins/Components/`
+            3. `.vst3` → `~/Library/Audio/Plug-Ins/VST3/`
+            4. Restart your DAW and rescan plugins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

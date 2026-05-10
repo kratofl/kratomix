@@ -2,6 +2,18 @@
 
 Kratomix is a JUCE-based plugin monorepo for Logic Pro-first audio effects on macOS. The root repo now carries the shared CMake/Make tooling, plugin metadata contract, and template generator for the full Kratomix line.
 
+## Download & Install
+
+Download the latest release from the [Releases](https://github.com/kratofl/kratomix/releases) page.
+
+Each plugin ships as a separate ZIP containing `.component` (AU) and `.vst3` formats.
+
+**Installation:**
+1. Unzip the downloaded file
+2. Move `.component` to `~/Library/Audio/Plug-Ins/Components/`
+3. Move `.vst3` to `~/Library/Audio/Plug-Ins/VST3/`
+4. Restart your DAW and run a plugin scan
+
 ## Layout
 
 - `core/cmake/`: shared JUCE and plugin registration helpers.
