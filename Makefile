@@ -11,4 +11,5 @@ JOBS ?= 4
 
 include $(ROOT_DIR)/mk/plugin.mk
 include $(ROOT_DIR)/mk/build.mk
+include $(ROOT_DIR)/mk/package.mk
 include $(ROOT_DIR)/mk/scaffold.mk

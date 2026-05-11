@@ -5,10 +5,12 @@
 #include "PluginProcessor.h"
 #include "Ui/PrismGraph.h"
 #include "ui/RackLookAndFeel.h"
+#include "ui/VuMeter.h"
 
 namespace kratomix
 {
-class PrismEqAudioProcessorEditor final : public juce::AudioProcessorEditor
+class PrismEqAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                          private juce::Timer
 {
 public:
     explicit PrismEqAudioProcessorEditor(PrismEqAudioProcessor&);
@@ -26,6 +28,7 @@ private:
     void rebuildBandAttachments(int oneBasedBandIndex);
     void setBandControlsEnabled(bool shouldBeEnabled);
     void configureValueSlider(juce::Slider& slider);
+    void timerCallback() override;
 
     PrismEqAudioProcessor& pluginProcessor;
 
@@ -38,14 +41,30 @@ private:
     juce::ComboBox analyzerModeBox;
     juce::Label phaseLabel;
     juce::ComboBox phaseModeBox;
+    juce::Label qualityLabel;
+    juce::ComboBox qualityModeBox;
+    juce::Label liveLabel;
+    juce::Label detectorLabel;
+    juce::Label movementLabel;
+    juce::Label speedLabel;
+    juce::Label rangeLabelGlobal;
+    juce::Label scaleLabel;
+    juce::Slider analyzerSpeedSlider;
+    juce::Slider analyzerRangeSlider;
+    juce::Slider gainScaleSlider;
     juce::Label meterLabel;
     juce::ToggleButton bypassButton { "BYPASS" };
     juce::Slider outputSlider;
+    ui::VuMeter outputMeter;
 
     ButtonAttachment bypassAttachment;
     SliderAttachment outputAttachment;
     ComboBoxAttachment analyzerModeAttachment;
     ComboBoxAttachment phaseModeAttachment;
+    ComboBoxAttachment qualityModeAttachment;
+    SliderAttachment analyzerSpeedAttachment;
+    SliderAttachment analyzerRangeAttachment;
+    SliderAttachment gainScaleAttachment;
 
     juce::Component bandPanel;
     juce::Label bandLabel;

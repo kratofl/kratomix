@@ -66,6 +66,9 @@ void PrismEqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     auto mainBuffer = getBusBuffer(buffer, false, 0);
     prismProcessor.updateSettings(readSettings());
+    const auto latency = prismProcessor.getCurrentLatencySamples();
+    if (latency != getLatencySamples())
+        setLatencySamples(latency);
 
     if (auto* sidechainBus = getBus(true, 1); sidechainBus != nullptr && sidechainBus->isEnabled())
     {
@@ -120,8 +123,12 @@ PrismSettings PrismEqAudioProcessor::readSettings() const
     current.bypassed = parameters.getRawParameterValue(bypassId)->load() >= 0.5f;
     current.phaseMode = static_cast<prism::PhaseMode>(juce::jlimit(
         0,
-        static_cast<int>(prism::PhaseMode::natural),
+        static_cast<int>(prism::PhaseMode::linearPhase),
         static_cast<int>(std::round(parameters.getRawParameterValue("phaseMode")->load()))));
+    current.qualityMode = static_cast<prism::QualityMode>(juce::jlimit(
+        0,
+        static_cast<int>(prism::QualityMode::oversample4x),
+        static_cast<int>(std::round(parameters.getRawParameterValue("qualityMode")->load()))));
 
     for (int index = 1; index <= prism::maxBands; ++index)
     {

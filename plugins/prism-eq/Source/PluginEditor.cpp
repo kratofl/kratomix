@@ -2,7 +2,7 @@
 
 namespace
 {
-constexpr int editorWidth = 1040;
+constexpr int editorWidth = 1180;
 constexpr int editorHeight = 620;
 constexpr float knobStartAngle = juce::MathConstants<float>::pi * 1.2f;
 constexpr float knobEndAngle = juce::MathConstants<float>::pi * 2.8f;
@@ -43,10 +43,15 @@ namespace kratomix
 PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& processorToEdit)
     : AudioProcessorEditor(&processorToEdit),
       pluginProcessor(processorToEdit),
+      outputMeter([this] { return pluginProcessor.getOutputLevel(); }),
       bypassAttachment(pluginProcessor.parameters, "bypass", bypassButton),
       outputAttachment(pluginProcessor.parameters, "outputGain", outputSlider),
       analyzerModeAttachment(pluginProcessor.parameters, "analyzerMode", analyzerModeBox),
-      phaseModeAttachment(pluginProcessor.parameters, "phaseMode", phaseModeBox)
+      phaseModeAttachment(pluginProcessor.parameters, "phaseMode", phaseModeBox),
+      qualityModeAttachment(pluginProcessor.parameters, "qualityMode", qualityModeBox),
+      analyzerSpeedAttachment(pluginProcessor.parameters, "analyzerSpeed", analyzerSpeedSlider),
+      analyzerRangeAttachment(pluginProcessor.parameters, "analyzerRange", analyzerRangeSlider),
+      gainScaleAttachment(pluginProcessor.parameters, "gainScale", gainScaleSlider)
 {
     brandLabel.setText("Kratomix", juce::dontSendNotification);
     brandLabel.setJustificationType(juce::Justification::centredLeft);
@@ -75,6 +80,51 @@ PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& 
     phaseModeBox.addItemList(prism::phaseModeChoices(), 1);
     styleComboBox(phaseModeBox);
     addAndMakeVisible(phaseModeBox);
+
+    qualityLabel.setText("QUALITY", juce::dontSendNotification);
+    styleCaption(qualityLabel);
+    addAndMakeVisible(qualityLabel);
+
+    qualityModeBox.addItemList(prism::qualityModeChoices(), 1);
+    styleComboBox(qualityModeBox);
+    addAndMakeVisible(qualityModeBox);
+
+    liveLabel.setText("LIVE", juce::dontSendNotification);
+    styleCaption(liveLabel);
+    addAndMakeVisible(liveLabel);
+
+    detectorLabel.setText("DET --.- dB", juce::dontSendNotification);
+    styleCaption(detectorLabel);
+    addAndMakeVisible(detectorLabel);
+
+    movementLabel.setText("MOVE --.- dB", juce::dontSendNotification);
+    styleCaption(movementLabel);
+    addAndMakeVisible(movementLabel);
+
+    for (auto* label : { &speedLabel, &rangeLabelGlobal, &scaleLabel })
+    {
+        styleCaption(*label);
+        addAndMakeVisible(*label);
+    }
+
+    speedLabel.setText("SPEED", juce::dontSendNotification);
+    rangeLabelGlobal.setText("RANGE", juce::dontSendNotification);
+    scaleLabel.setText("SCALE", juce::dontSendNotification);
+
+    analyzerSpeedSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    analyzerSpeedSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    analyzerRangeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    analyzerRangeSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    gainScaleSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    gainScaleSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+
+    for (auto* slider : { &analyzerSpeedSlider, &analyzerRangeSlider, &gainScaleSlider })
+    {
+        slider->setColour(juce::Slider::thumbColourId, accentColour());
+        slider->setColour(juce::Slider::trackColourId, accentColour().withAlpha(0.55f));
+        slider->setColour(juce::Slider::backgroundColourId, juce::Colour::fromRGB(34, 35, 38));
+        addAndMakeVisible(*slider);
+    }
 
     graph.attachState(pluginProcessor.parameters);
     graph.attachAnalyzerReader([this](PrismAnalyzerFrame& frame)
@@ -114,11 +164,13 @@ PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& 
     meterLabel.setFont(juce::FontOptions(11.5f, juce::Font::bold));
     meterLabel.setColour(juce::Label::textColourId, juce::Colour::fromRGB(160, 146, 120));
     addAndMakeVisible(meterLabel);
+    addAndMakeVisible(outputMeter);
 
     configureBandControls();
     rebuildBandAttachments(0);
 
     setSize(editorWidth, editorHeight);
+    startTimerHz(20);
 }
 
 void PrismEqAudioProcessorEditor::paint(juce::Graphics& g)
@@ -154,26 +206,44 @@ void PrismEqAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds().reduced(24);
     auto top = bounds.removeFromTop(46);
-    brandLabel.setBounds(top.removeFromLeft(180));
-    titleLabel.setBounds(top.removeFromLeft(180));
-    top.removeFromLeft(16);
-    analyzerLabel.setBounds(top.removeFromLeft(42).reduced(0, 8));
-    analyzerModeBox.setBounds(top.removeFromLeft(170).reduced(0, 8));
+    brandLabel.setBounds(top.removeFromLeft(150));
+    titleLabel.setBounds(top.removeFromLeft(120));
     top.removeFromLeft(12);
-    phaseLabel.setBounds(top.removeFromLeft(50).reduced(0, 8));
-    phaseModeBox.setBounds(top.removeFromLeft(136).reduced(0, 8));
+    analyzerLabel.setBounds(top.removeFromLeft(38).reduced(0, 8));
+    analyzerModeBox.setBounds(top.removeFromLeft(140).reduced(0, 8));
+    top.removeFromLeft(10);
+    phaseLabel.setBounds(top.removeFromLeft(46).reduced(0, 8));
+    phaseModeBox.setBounds(top.removeFromLeft(118).reduced(0, 8));
+    top.removeFromLeft(10);
+    qualityLabel.setBounds(top.removeFromLeft(54).reduced(0, 8));
+    qualityModeBox.setBounds(top.removeFromLeft(74).reduced(0, 8));
+    top.removeFromLeft(10);
+    liveLabel.setBounds(top.removeFromLeft(36).reduced(0, 8));
+    detectorLabel.setBounds(top.removeFromLeft(82).reduced(0, 8));
+    movementLabel.setBounds(top.removeFromLeft(92).reduced(0, 8));
 
     bounds.removeFromTop(14);
 
     auto outputArea = bounds.removeFromRight(90);
     meterLabel.setBounds(outputArea.removeFromTop(24));
-    bypassButton.setBounds(outputArea.removeFromBottom(110).reduced(0, 4));
-    outputSlider.setBounds(outputArea.reduced(8, 10));
+    bypassButton.setBounds(outputArea.removeFromBottom(92).reduced(0, 4));
+    outputSlider.setBounds(outputArea.removeFromBottom(210).reduced(8, 10));
+    outputMeter.setBounds(outputArea.reduced(4, 8));
 
-    auto bandArea = bounds.removeFromBottom(118);
+    auto bandArea = bounds.removeFromBottom(148);
     bounds.removeFromBottom(10);
 
     graph.setBounds(bounds.reduced(0, 0));
+
+    auto analyzerControlArea = bandArea.removeFromTop(24);
+    speedLabel.setBounds(analyzerControlArea.removeFromLeft(52));
+    analyzerSpeedSlider.setBounds(analyzerControlArea.removeFromLeft(120).reduced(4, 6));
+    rangeLabelGlobal.setBounds(analyzerControlArea.removeFromLeft(58));
+    analyzerRangeSlider.setBounds(analyzerControlArea.removeFromLeft(120).reduced(4, 6));
+    scaleLabel.setBounds(analyzerControlArea.removeFromLeft(54));
+    gainScaleSlider.setBounds(analyzerControlArea.removeFromLeft(120).reduced(4, 6));
+    bandArea.removeFromTop(6);
+
     bandPanel.setBounds(bandArea.reduced(0, 2));
 
     auto panelBounds = bandPanel.getLocalBounds().reduced(12, 10);
@@ -341,6 +411,24 @@ void PrismEqAudioProcessorEditor::configureValueSlider(juce::Slider& slider)
     slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour::fromRGB(250, 231, 202));
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour::fromRGBA(28, 23, 21, 160));
+}
+
+void PrismEqAudioProcessorEditor::timerCallback()
+{
+    const auto selectedBand = graph.getSelectedBand();
+    PrismAnalyzerFrame frame;
+    pluginProcessor.copyAnalyzerFrame(frame);
+
+    if (selectedBand <= 0)
+    {
+        detectorLabel.setText("DET --.- dB", juce::dontSendNotification);
+        movementLabel.setText("MOVE --.- dB", juce::dontSendNotification);
+        return;
+    }
+
+    const auto index = static_cast<size_t>(selectedBand - 1);
+    detectorLabel.setText("DET " + juce::String(frame.detectorLevelDb[index], 1) + " dB", juce::dontSendNotification);
+    movementLabel.setText("MOVE " + juce::String(frame.dynamicGainDb[index], 1) + " dB", juce::dontSendNotification);
 }
 
 }

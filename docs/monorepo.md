@@ -19,6 +19,8 @@ make build [PLUGIN=<slug>|all]
 make test [PLUGIN=<slug>|all]
 make run PLUGIN=<slug>
 make validate PLUGIN=<slug>
+make package PLUGIN=<slug>
+make release PLUGIN=<slug>
 make new-plugin SLUG=<slug> NAME="Kratomix ..." CODE=<FourCC>
 ```
 
@@ -53,3 +55,10 @@ The root CMake layer uses those values to register the JUCE plugin targets and n
 - `test-<slug>`
 
 `core/cmake/print_plugin_metadata.cmake` reads the same file so `make validate` and `make run` do not duplicate AU or product metadata.
+
+## Release Packages
+
+Use `make package PLUGIN=<slug>` to build one plugin and create `dist/<slug>-Release.zip`.
+The zip stages only the exact current product-name artifacts declared by `plugins/<slug>/plugin.cmake`, so stale build outputs with old names are ignored.
+
+Use `make release PLUGIN=<slug>` when preparing a GitHub release artifact. It builds the plugin, validates the AU when the plugin provides one, and then writes the zip.

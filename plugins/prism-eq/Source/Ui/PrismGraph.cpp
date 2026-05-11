@@ -1,6 +1,7 @@
 #include "PrismGraph.h"
 
 #include "AnalyzerFeatures.h"
+#include "Dsp/PrismResponseModel.h"
 #include "Parameters.h"
 
 namespace kratomix::prism
@@ -9,8 +10,7 @@ namespace
 {
 constexpr float minFrequency = 20.0f;
 constexpr float maxFrequency = 20000.0f;
-constexpr float minGainDb = -18.0f;
-constexpr float maxGainDb = 18.0f;
+constexpr float baseVisibleGainDb = 18.0f;
 
 juce::Colour graphBackground()
 {
@@ -112,9 +112,12 @@ void PrismGraph::paint(juce::Graphics& g)
         }
     }
 
-    for (float gain = minGainDb; gain <= maxGainDb; gain += 6.0f)
+    const auto visibleGainDb = visibleGainRangeDb();
+    const auto gridStepDb = visibleGainDb <= 9.0f ? 3.0f : 6.0f;
+
+    for (float gain = -visibleGainDb; gain <= visibleGainDb + 0.001f; gain += gridStepDb)
     {
-        const auto y = gainToY(gain, graph);
+        const auto y = gainToY(gain, graph, visibleGainDb);
         g.setColour(std::abs(gain) < 0.001f ? responseColour().withAlpha(0.55f) : gridColour());
         g.drawHorizontalLine(static_cast<int>(std::round(y)), graph.getX(), graph.getRight());
 
@@ -138,16 +141,23 @@ void PrismGraph::paint(juce::Graphics& g)
     if (analyzerMode == 2 || analyzerMode == 4 || analyzerMode == 5)
         drawAnalyzerLane(g, graph, sidechainSpectrum, sidechainAnalyzerColour().withAlpha(analyzerFrame.sidechainActive ? 0.52f : 0.18f), analyzerRange);
 
-    const auto drawResponse = [this, &g, graph](bool includeDynamicGain, juce::Colour colour, float thickness)
+    const auto settingsSnapshot = readSettingsSnapshot();
+    const auto dynamicGains = dynamicGainSnapshot();
+    const auto responseSampleRate = analyzerFrame.sampleRate > 0.0 ? analyzerFrame.sampleRate : 44100.0;
+    const auto staticResponse = makePrismResponseSnapshot(settingsSnapshot, responseSampleRate, dynamicGains, false);
+    const auto liveResponse = makePrismResponseSnapshot(settingsSnapshot, responseSampleRate, dynamicGains, true);
+
+    const auto drawResponse = [&g, graph, visibleGainDb](const PrismResponseSnapshot& snapshot, juce::Colour colour, float thickness)
     {
         juce::Path responsePath;
         const auto steps = juce::jmax(24, static_cast<int>(graph.getWidth()));
+
         for (int step = 0; step <= steps; ++step)
         {
             const auto proportion = static_cast<float>(step) / static_cast<float>(steps);
             const auto x = graph.getX() + proportion * graph.getWidth();
             const auto frequency = xToFrequency(x, graph);
-            const auto y = gainToY(responseGainAt(frequency, includeDynamicGain), graph);
+            const auto y = gainToY(prismResponseGainDbAt(snapshot, frequency), graph, visibleGainDb);
 
             if (step == 0)
                 responsePath.startNewSubPath(x, y);
@@ -160,8 +170,8 @@ void PrismGraph::paint(juce::Graphics& g)
     };
 
     if (hasDynamicBands())
-        drawResponse(false, responseColour().withAlpha(0.36f), 1.4f);
-    drawResponse(true, responseColour(), 2.6f);
+        drawResponse(staticResponse, responseColour().withAlpha(0.36f), 1.4f);
+    drawResponse(liveResponse, responseColour(), 2.6f);
 
     if (state != nullptr)
     {
@@ -182,11 +192,20 @@ void PrismGraph::paint(juce::Graphics& g)
 
             if (dynamicEnabled)
             {
-                const auto currentGain = parameterValue(prefix + "Gain", 0.0f) + dynamicGain;
+                const auto baseGain = parameterValue(prefix + "Gain", 0.0f);
+                const auto rangeDb = parameterValue(prefix + "DynamicRange", 0.0f);
+                const auto currentGain = baseGain + dynamicGain;
+                const auto rangePoint = pointForFrequencyAndGain(parameterValue(prefix + "Frequency", 1000.0f), baseGain + rangeDb);
                 const auto currentPoint = pointForFrequencyAndGain(parameterValue(prefix + "Frequency", 1000.0f), currentGain);
-                g.setColour(juce::Colour::fromRGB(95, 211, 186).withAlpha(0.55f));
-                g.drawLine(point.x, point.y, currentPoint.x, currentPoint.y, 1.4f);
-                g.fillEllipse(currentPoint.x - 3.5f, currentPoint.y - 3.5f, 7.0f, 7.0f);
+                const auto upward = rangeDb >= 0.0f;
+                const auto movementColour = upward ? juce::Colour::fromRGB(120, 196, 255)
+                                                   : juce::Colour::fromRGB(95, 211, 186);
+
+                g.setColour(movementColour.withAlpha(0.18f));
+                g.drawLine(point.x, point.y, rangePoint.x, rangePoint.y, 3.0f);
+                g.setColour(movementColour.withAlpha(0.70f));
+                g.drawLine(point.x, point.y, currentPoint.x, currentPoint.y, 1.8f);
+                g.fillEllipse(currentPoint.x - 4.0f, currentPoint.y - 4.0f, 8.0f, 8.0f);
             }
 
             g.setColour(selected ? responseColour() : juce::Colour::fromRGB(95, 211, 186));
@@ -272,7 +291,7 @@ bool PrismGraph::createBandAt(juce::Point<float> point)
         setSelectedBand(index);
         setParameterValue(prefix + "Enabled", 1.0f);
         setParameterValue(prefix + "Frequency", xToFrequency(point.x, graph));
-        setParameterValue(prefix + "Gain", yToGain(point.y, graph));
+        setParameterValue(prefix + "Gain", yToGain(point.y, graph, visibleGainRangeDb()));
         setParameterValue(prefix + "Q", 1.0f);
         repaint();
         return true;
@@ -329,7 +348,7 @@ void PrismGraph::dragSelectedBandTo(juce::Point<float> point)
     const auto prefix = bandPrefix(selectedBand);
 
     setParameterValue(prefix + "Frequency", xToFrequency(constrained.x, graph));
-    setParameterValue(prefix + "Gain", yToGain(constrained.y, graph));
+    setParameterValue(prefix + "Gain", yToGain(constrained.y, graph, visibleGainRangeDb()));
     repaint();
 }
 
@@ -352,7 +371,7 @@ void PrismGraph::clearSelection()
 juce::Point<float> PrismGraph::pointForFrequencyAndGain(float frequency, float gainDb) const
 {
     const auto graph = graphBounds();
-    return { frequencyToX(frequency, graph), gainToY(gainDb, graph) };
+    return { frequencyToX(frequency, graph), gainToY(gainDb, graph, visibleGainRangeDb()) };
 }
 
 juce::Rectangle<float> PrismGraph::graphBounds() const
@@ -374,16 +393,24 @@ float PrismGraph::xToFrequency(float x, juce::Rectangle<float> bounds)
     return std::pow(10.0f, logFrequency);
 }
 
-float PrismGraph::gainToY(float gainDb, juce::Rectangle<float> bounds)
+float PrismGraph::gainToY(float gainDb, juce::Rectangle<float> bounds, float visibleGainDb)
 {
-    const auto normalized = juce::jmap(juce::jlimit(minGainDb, maxGainDb, gainDb), minGainDb, maxGainDb, 1.0f, 0.0f);
+    const auto range = juce::jmax(3.0f, visibleGainDb);
+    const auto normalized = juce::jmap(juce::jlimit(-range, range, gainDb), -range, range, 1.0f, 0.0f);
     return bounds.getY() + normalized * bounds.getHeight();
 }
 
-float PrismGraph::yToGain(float y, juce::Rectangle<float> bounds)
+float PrismGraph::yToGain(float y, juce::Rectangle<float> bounds, float visibleGainDb)
 {
+    const auto range = juce::jmax(3.0f, visibleGainDb);
     const auto normalized = juce::jlimit(0.0f, 1.0f, (y - bounds.getY()) / juce::jmax(1.0f, bounds.getHeight()));
-    return juce::jmap(normalized, 1.0f, 0.0f, minGainDb, maxGainDb);
+    return juce::jmap(normalized, 1.0f, 0.0f, -range, range);
+}
+
+float PrismGraph::visibleGainRangeDb() const
+{
+    const auto scale = juce::jlimit(0.25f, 2.0f, parameterValue("gainScale", 1.0f));
+    return baseVisibleGainDb / scale;
 }
 
 void PrismGraph::setSelectedBand(int oneBasedIndex)
@@ -607,6 +634,64 @@ float PrismGraph::parameterValue(const juce::String& id, float fallback) const
     return fallback;
 }
 
+PrismSettings PrismGraph::readSettingsSnapshot() const
+{
+    PrismSettings snapshot;
+
+    if (state == nullptr)
+        return snapshot;
+
+    snapshot.inputGainDb = parameterValue("inputGain", 0.0f);
+    snapshot.outputGainDb = parameterValue("outputGain", 0.0f);
+    snapshot.mix = parameterValue("mix", 1.0f);
+    snapshot.bypassed = parameterValue("bypass", 0.0f) >= 0.5f;
+    snapshot.phaseMode = static_cast<PhaseMode>(juce::jlimit(
+        0,
+        static_cast<int>(PhaseMode::linearPhase),
+        static_cast<int>(std::round(parameterValue("phaseMode", 0.0f)))));
+    snapshot.qualityMode = static_cast<QualityMode>(juce::jlimit(
+        0,
+        static_cast<int>(QualityMode::oversample4x),
+        static_cast<int>(std::round(parameterValue("qualityMode", 0.0f)))));
+
+    for (int index = 1; index <= maxBands; ++index)
+    {
+        const auto prefix = bandPrefix(index);
+        auto& band = snapshot.bands[static_cast<size_t>(index - 1)];
+
+        band.enabled = parameterValue(prefix + "Enabled", 0.0f) >= 0.5f;
+        band.type = static_cast<BandType>(juce::jlimit(
+            0,
+            static_cast<int>(BandType::notch),
+            static_cast<int>(std::round(parameterValue(prefix + "Type", 0.0f)))));
+        band.frequency = parameterValue(prefix + "Frequency", 1000.0f);
+        band.gainDb = parameterValue(prefix + "Gain", 0.0f);
+        band.q = parameterValue(prefix + "Q", 1.0f);
+        band.dynamicEnabled = parameterValue(prefix + "DynamicEnabled", 0.0f) >= 0.5f;
+        band.dynamicRangeDb = parameterValue(prefix + "DynamicRange", 0.0f);
+        band.thresholdDb = parameterValue(prefix + "Threshold", -24.0f);
+        band.attackMs = parameterValue(prefix + "Attack", 20.0f);
+        band.releaseMs = parameterValue(prefix + "Release", 120.0f);
+        band.sidechainSource = static_cast<SidechainSource>(juce::jlimit(
+            0,
+            static_cast<int>(SidechainSource::external),
+            static_cast<int>(std::round(parameterValue(prefix + "SidechainSource", 0.0f)))));
+        band.solo = parameterValue(prefix + "Solo", 0.0f) >= 0.5f;
+    }
+
+    return snapshot;
+}
+
+std::array<float, maxBands> PrismGraph::dynamicGainSnapshot() const
+{
+    std::array<float, maxBands> gains {};
+
+    for (size_t index = 0; index < gains.size(); ++index)
+        gains[index] = analyzerFrame.dynamicGainDb[index];
+
+    return gains;
+}
+
 bool PrismGraph::bandEnabled(int oneBasedIndex) const
 {
     return parameterValue(bandPrefix(oneBasedIndex) + "Enabled", 0.0f) >= 0.5f;
@@ -629,58 +714,5 @@ bool PrismGraph::hasDynamicBands() const
             return true;
 
     return false;
-}
-
-float PrismGraph::responseGainAt(float frequency, bool includeDynamicGain) const
-{
-    if (state == nullptr)
-        return 0.0f;
-
-    auto totalGain = 0.0f;
-
-    for (int index = 1; index <= maxBands; ++index)
-    {
-        if (! bandEnabled(index))
-            continue;
-
-        const auto prefix = bandPrefix(index);
-        const auto bandFrequency = parameterValue(prefix + "Frequency", 1000.0f);
-        auto bandGain = parameterValue(prefix + "Gain", 0.0f);
-        if (includeDynamicGain && parameterValue(prefix + "DynamicEnabled", 0.0f) >= 0.5f)
-            bandGain += analyzerFrame.dynamicGainDb[static_cast<size_t>(index - 1)];
-        const auto q = juce::jmax(0.1f, parameterValue(prefix + "Q", 1.0f));
-        const auto type = static_cast<BandType>(juce::jlimit(
-            0,
-            static_cast<int>(BandType::notch),
-            static_cast<int>(std::round(parameterValue(prefix + "Type", 0.0f)))));
-
-        const auto octaveDistance = std::log2(juce::jmax(20.0f, frequency) / juce::jmax(20.0f, bandFrequency));
-        const auto bellWeight = std::exp(-0.5f * std::pow(octaveDistance * q * 1.4f, 2.0f));
-
-        switch (type)
-        {
-            case BandType::lowShelf:
-                totalGain += bandGain / (1.0f + std::pow(frequency / bandFrequency, q * 2.0f));
-                break;
-            case BandType::highShelf:
-                totalGain += bandGain / (1.0f + std::pow(bandFrequency / frequency, q * 2.0f));
-                break;
-            case BandType::highPass:
-                totalGain += frequency < bandFrequency ? -18.0f * (1.0f - frequency / bandFrequency) : 0.0f;
-                break;
-            case BandType::lowPass:
-                totalGain += frequency > bandFrequency ? -18.0f * (1.0f - bandFrequency / frequency) : 0.0f;
-                break;
-            case BandType::notch:
-                totalGain -= 18.0f * bellWeight;
-                break;
-            case BandType::bell:
-            default:
-                totalGain += bandGain * bellWeight;
-                break;
-        }
-    }
-
-    return juce::jlimit(minGainDb, maxGainDb, totalGain);
 }
 }

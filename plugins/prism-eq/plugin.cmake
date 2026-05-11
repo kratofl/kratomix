@@ -15,6 +15,16 @@ set(KRATOMIX_PLUGIN_SOURCES
     Source/PluginProcessor.cpp
     Source/PluginEditor.h
     Source/PluginEditor.cpp
+    Source/Dsp/PrismTypes.h
+    Source/Dsp/PrismLatency.h
+    Source/Dsp/PrismFilterDesign.h
+    Source/Dsp/PrismFilterDesign.cpp
+    Source/Dsp/PrismResponseModel.h
+    Source/Dsp/PrismResponseModel.cpp
+    Source/Dsp/PrismMinimumPhaseEngine.h
+    Source/Dsp/PrismMinimumPhaseEngine.cpp
+    Source/Dsp/PrismLinearPhaseEngine.h
+    Source/Dsp/PrismLinearPhaseEngine.cpp
     Source/Dsp/PrismProcessor.h
     Source/Dsp/PrismProcessor.cpp
     Source/Ui/AnalyzerFeatures.h

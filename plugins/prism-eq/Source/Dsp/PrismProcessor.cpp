@@ -15,21 +15,14 @@ PrismProcessor::PrismProcessor()
     for (auto* lane : { &preAnalyzerSamples, &postAnalyzerSamples, &sidechainAnalyzerSamples })
         for (auto& sample : *lane)
             sample.store(0.0f, std::memory_order_relaxed);
-
-    for (auto& gain : analyzerDynamicGainDb)
-        gain.store(0.0f, std::memory_order_relaxed);
 }
 
 void PrismProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 {
     sampleRate = spec.sampleRate;
     dryBuffer.setSize(static_cast<int>(spec.numChannels), static_cast<int>(spec.maximumBlockSize));
-
-    for (auto& filter : filters)
-        filter.prepare(spec);
-
-    for (auto& filter : phaseFilters)
-        filter.prepare(spec);
+    minimumPhaseEngine.prepare(spec);
+    linearPhaseEngine.prepare(spec);
 
     inputGainDbSmoother.reset(sampleRate, 0.02);
     outputGainDbSmoother.reset(sampleRate, 0.02);
@@ -42,18 +35,8 @@ void PrismProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
 void PrismProcessor::reset()
 {
-    for (auto& filter : filters)
-        filter.reset();
-
-    for (auto& filter : phaseFilters)
-        filter.reset();
-
-    for (auto& filter : detectorFilters)
-        filter.reset();
-
-    dynamicGainDb.fill(0.0f);
-    for (auto& gain : analyzerDynamicGainDb)
-        gain.store(0.0f, std::memory_order_relaxed);
+    minimumPhaseEngine.reset();
+    linearPhaseEngine.reset();
     analyzerWriteIndex.store(0, std::memory_order_relaxed);
     analyzerSidechainActive.store(false, std::memory_order_relaxed);
 
@@ -74,7 +57,9 @@ void PrismProcessor::updateSettings(const PrismSettings& newSettings)
     outputGainDbSmoother.setTargetValue(settings.outputGainDb);
     mixSmoother.setTargetValue(settings.mix);
     wetSmoother.setTargetValue(settings.bypassed ? 0.0f : 1.0f);
-    updateFilterCoefficients();
+    currentLatencySamples.store(prism::prismLatencyFor(settings.phaseMode, settings.qualityMode), std::memory_order_relaxed);
+    minimumPhaseEngine.updateSettings(settings);
+    linearPhaseEngine.updateSettings(settings);
 
     if (! hasProcessedAudio)
         applyTargetsImmediately();
@@ -101,26 +86,10 @@ void PrismProcessor::process(juce::AudioBuffer<float>& buffer, const juce::Audio
             buffer.getWritePointer(channel)[sample] *= inputGain;
     }
 
-    updateDynamicGain(buffer, sidechainBuffer, buffer.getNumSamples());
-    updateFilterCoefficients();
-
-    juce::dsp::AudioBlock<float> block { buffer };
-    juce::dsp::ProcessContextReplacing<float> context { block };
-
-    for (size_t index = 0; index < filters.size(); ++index)
-    {
-        if (settings.bands[index].enabled)
-            filters[index].process(context);
-    }
-
-    if (settings.phaseMode == prism::PhaseMode::natural)
-    {
-        for (size_t index = 0; index < phaseFilters.size(); ++index)
-        {
-            if (settings.bands[index].enabled)
-                phaseFilters[index].process(context);
-        }
-    }
+    if (settings.phaseMode == prism::PhaseMode::linearPhase)
+        linearPhaseEngine.process(buffer);
+    else
+        minimumPhaseEngine.process(buffer, sidechainBuffer);
 
     double energy = 0.0;
 
@@ -151,6 +120,11 @@ float PrismProcessor::getOutputLevel() const noexcept
     return outputLevel.load();
 }
 
+int PrismProcessor::getCurrentLatencySamples() const noexcept
+{
+    return currentLatencySamples.load(std::memory_order_relaxed);
+}
+
 void PrismProcessor::copyAnalyzerFrame(PrismAnalyzerFrame& destination) const noexcept
 {
     const auto writeIndex = analyzerWriteIndex.load(std::memory_order_acquire);
@@ -163,8 +137,7 @@ void PrismProcessor::copyAnalyzerFrame(PrismAnalyzerFrame& destination) const no
         destination.sidechain[static_cast<size_t>(sample)] = sidechainAnalyzerSamples[static_cast<size_t>(sourceIndex)].load(std::memory_order_relaxed);
     }
 
-    for (size_t index = 0; index < analyzerDynamicGainDb.size(); ++index)
-        destination.dynamicGainDb[index] = analyzerDynamicGainDb[index].load(std::memory_order_relaxed);
+    minimumPhaseEngine.copyDynamicTelemetryTo(destination);
 
     destination.sampleRate = sampleRate;
     destination.sidechainActive = analyzerSidechainActive.load(std::memory_order_relaxed);
@@ -176,58 +149,8 @@ void PrismProcessor::applyTargetsImmediately()
     outputGainDbSmoother.setCurrentAndTargetValue(settings.outputGainDb);
     mixSmoother.setCurrentAndTargetValue(settings.mix);
     wetSmoother.setCurrentAndTargetValue(settings.bypassed ? 0.0f : 1.0f);
-    updateFilterCoefficients();
-}
-
-void PrismProcessor::updateFilterCoefficients()
-{
-    for (size_t index = 0; index < filters.size(); ++index)
-    {
-        *filters[index].state = *makeCoefficients(sampleRate, settings.bands[index], dynamicGainDb[index]);
-        *phaseFilters[index].state = *Coefficients::makeAllPass(
-            sampleRate,
-            juce::jlimit(20.0f, 20000.0f, settings.bands[index].frequency),
-            juce::jlimit(0.35f, 4.0f, std::sqrt(juce::jmax(0.1f, settings.bands[index].q))));
-        detectorFilters[index].coefficients = Coefficients::makeBandPass(
-            sampleRate,
-            juce::jlimit(20.0f, 20000.0f, settings.bands[index].frequency),
-            juce::jlimit(0.1f, 40.0f, settings.bands[index].q));
-    }
-}
-
-void PrismProcessor::updateDynamicGain(const juce::AudioBuffer<float>& mainBuffer,
-                                       const juce::AudioBuffer<float>* sidechainBuffer,
-                                       int numSamples)
-{
-    const auto sidechainAvailable = sidechainBuffer != nullptr
-                                    && sidechainBuffer->getNumChannels() > 0
-                                    && sidechainBuffer->getNumSamples() > 0;
-    const auto blockSeconds = static_cast<float>(numSamples / juce::jmax(1.0, sampleRate));
-
-    for (size_t index = 0; index < settings.bands.size(); ++index)
-    {
-        const auto& band = settings.bands[index];
-
-        auto targetDb = 0.0f;
-        if (band.enabled && band.dynamicEnabled && std::abs(band.dynamicRangeDb) > 0.001f)
-        {
-            const auto useExternalSidechain = band.sidechainSource == prism::SidechainSource::external && sidechainAvailable;
-            const auto& detectorBuffer = useExternalSidechain ? *sidechainBuffer : mainBuffer;
-            const auto detectorSamples = useExternalSidechain ? juce::jmin(numSamples, sidechainBuffer->getNumSamples()) : numSamples;
-            const auto detectorDb = bandLimitedRmsDb(detectorBuffer, detectorSamples, detectorFilters[index]);
-            const auto overThresholdDb = detectorDb - band.thresholdDb;
-
-            if (overThresholdDb > 0.0f)
-                targetDb = -std::abs(band.dynamicRangeDb) * juce::jlimit(0.0f, 1.0f, overThresholdDb / 24.0f);
-        }
-
-        auto& currentDb = dynamicGainDb[index];
-        const auto movingAwayFromNeutral = std::abs(targetDb) > std::abs(currentDb);
-        const auto timeMs = juce::jmax(0.1f, movingAwayFromNeutral ? band.attackMs : band.releaseMs);
-        const auto coefficient = std::exp(-blockSeconds / (timeMs * 0.001f));
-        currentDb = targetDb + (currentDb - targetDb) * coefficient;
-        analyzerDynamicGainDb[index].store(currentDb, std::memory_order_relaxed);
-    }
+    minimumPhaseEngine.updateSettings(settings);
+    linearPhaseEngine.updateSettings(settings);
 }
 
 void PrismProcessor::publishAnalyzerSamples(const juce::AudioBuffer<float>& preBuffer,
@@ -269,66 +192,4 @@ float PrismProcessor::monoSampleAt(const juce::AudioBuffer<float>& buffer, int s
     return value / static_cast<float>(buffer.getNumChannels());
 }
 
-float PrismProcessor::blockRmsDb(const juce::AudioBuffer<float>& buffer, int numSamples) noexcept
-{
-    if (buffer.getNumChannels() <= 0 || numSamples <= 0)
-        return -120.0f;
-
-    double energy = 0.0;
-    const auto samplesToRead = juce::jmin(numSamples, buffer.getNumSamples());
-
-    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
-        for (int sample = 0; sample < samplesToRead; ++sample)
-        {
-            const auto value = buffer.getSample(channel, sample);
-            energy += static_cast<double>(value) * static_cast<double>(value);
-        }
-
-    const auto divisor = static_cast<double>(juce::jmax(1, samplesToRead * buffer.getNumChannels()));
-    return juce::Decibels::gainToDecibels(static_cast<float>(std::sqrt(energy / divisor)), -120.0f);
-}
-
-float PrismProcessor::bandLimitedRmsDb(const juce::AudioBuffer<float>& buffer, int numSamples, Filter& filter) noexcept
-{
-    if (buffer.getNumChannels() <= 0 || numSamples <= 0)
-        return -120.0f;
-
-    double energy = 0.0;
-    const auto samplesToRead = juce::jmin(numSamples, buffer.getNumSamples());
-
-    for (int sample = 0; sample < samplesToRead; ++sample)
-    {
-        const auto filtered = filter.processSample(monoSampleAt(buffer, sample));
-        energy += static_cast<double>(filtered) * static_cast<double>(filtered);
-    }
-
-    const auto divisor = static_cast<double>(juce::jmax(1, samplesToRead));
-    return juce::Decibels::gainToDecibels(static_cast<float>(std::sqrt(energy / divisor)), -120.0f);
-}
-
-PrismProcessor::Coefficients::Ptr PrismProcessor::makeCoefficients(double sampleRateToUse,
-                                                                   const PrismBandSettings& band,
-                                                                   float dynamicGainDb)
-{
-    const auto frequency = juce::jlimit(20.0f, 20000.0f, band.frequency);
-    const auto q = juce::jlimit(0.1f, 40.0f, band.q);
-    const auto gain = decibelsToGain(band.gainDb + dynamicGainDb);
-
-    switch (band.type)
-    {
-        case prism::BandType::lowShelf:
-            return Coefficients::makeLowShelf(sampleRateToUse, frequency, q, gain);
-        case prism::BandType::highShelf:
-            return Coefficients::makeHighShelf(sampleRateToUse, frequency, q, gain);
-        case prism::BandType::highPass:
-            return Coefficients::makeHighPass(sampleRateToUse, frequency, q);
-        case prism::BandType::lowPass:
-            return Coefficients::makeLowPass(sampleRateToUse, frequency, q);
-        case prism::BandType::notch:
-            return Coefficients::makeNotch(sampleRateToUse, frequency, q);
-        case prism::BandType::bell:
-        default:
-            return Coefficients::makePeakFilter(sampleRateToUse, frequency, q, gain);
-    }
-}
 }

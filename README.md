@@ -53,6 +53,13 @@ make run PLUGIN=velvet-channel
 make validate PLUGIN=velvet-channel
 ```
 
+Create a release zip for one plugin:
+
+```bash
+make package PLUGIN=velvet-channel
+make release PLUGIN=velvet-channel
+```
+
 Use a local JUCE checkout:
 
 ```bash

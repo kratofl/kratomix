@@ -29,7 +29,15 @@ enum class SidechainSource
 enum class PhaseMode
 {
     zeroLatency = 0,
-    natural
+    natural,
+    linearPhase
+};
+
+enum class QualityMode
+{
+    native = 0,
+    oversample2x,
+    oversample4x
 };
 
 inline juce::String bandPrefix(int oneBasedIndex)
@@ -37,9 +45,9 @@ inline juce::String bandPrefix(int oneBasedIndex)
     return "band" + juce::String(oneBasedIndex).paddedLeft('0', 2);
 }
 
-inline constexpr std::array<const char*, 9> globalParameterIds()
+inline constexpr std::array<const char*, 10> globalParameterIds()
 {
-    return { "inputGain", "outputGain", "mix", "bypass", "analyzerMode", "analyzerSpeed", "analyzerRange", "gainScale", "phaseMode" };
+    return { "inputGain", "outputGain", "mix", "bypass", "analyzerMode", "analyzerSpeed", "analyzerRange", "gainScale", "phaseMode", "qualityMode" };
 }
 
 inline juce::StringArray bandTypeChoices()
@@ -59,7 +67,12 @@ inline juce::StringArray analyzerModeChoices()
 
 inline juce::StringArray phaseModeChoices()
 {
-    return { "Zero Latency", "Natural" };
+    return { "Zero Latency", "Natural", "Linear Phase" };
+}
+
+inline juce::StringArray qualityModeChoices()
+{
+    return { "Native", "2x", "4x" };
 }
 
 inline juce::NormalisableRange<float> frequencyRange()
@@ -146,6 +159,12 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         phaseModeChoices(),
         0));
 
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "qualityMode", 1 },
+        "Quality Mode",
+        qualityModeChoices(),
+        static_cast<int>(QualityMode::native)));
+
     for (int index = 1; index <= maxBands; ++index)
     {
         const auto prefix = bandPrefix(index);
@@ -193,7 +212,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID { prefix + "DynamicRange", 1 },
             labelPrefix + "Dynamic Range",
-            juce::NormalisableRange<float> { 0.0f, 30.0f, 0.1f },
+            juce::NormalisableRange<float> { -30.0f, 30.0f, 0.1f },
             0.0f,
             juce::AudioParameterFloatAttributes().withLabel("dB")));
 

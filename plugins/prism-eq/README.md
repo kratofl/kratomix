@@ -21,4 +21,8 @@ make build PLUGIN=prism-eq
 make test PLUGIN=prism-eq
 make run PLUGIN=prism-eq
 make validate PLUGIN=prism-eq
+make package PLUGIN=prism-eq
+make release PLUGIN=prism-eq
 ```
+
+`make package PLUGIN=prism-eq` creates `dist/prism-eq-Release.zip` with the current `Kratomix Prism EQ` AU, VST3, and Standalone artifacts. Stale sidechain-named Prism artifacts are not part of the package.

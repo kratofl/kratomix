@@ -45,9 +45,11 @@ private:
     juce::Rectangle<float> graphBounds() const;
     static float frequencyToX(float frequency, juce::Rectangle<float> bounds);
     static float xToFrequency(float x, juce::Rectangle<float> bounds);
-    static float gainToY(float gainDb, juce::Rectangle<float> bounds);
-    static float yToGain(float y, juce::Rectangle<float> bounds);
-    float responseGainAt(float frequency, bool includeDynamicGain) const;
+    static float gainToY(float gainDb, juce::Rectangle<float> bounds, float visibleGainDb);
+    static float yToGain(float y, juce::Rectangle<float> bounds, float visibleGainDb);
+    float visibleGainRangeDb() const;
+    PrismSettings readSettingsSnapshot() const;
+    std::array<float, maxBands> dynamicGainSnapshot() const;
     bool hasDynamicBands() const;
     void setSelectedBand(int oneBasedIndex);
     void updateSpectrum();
