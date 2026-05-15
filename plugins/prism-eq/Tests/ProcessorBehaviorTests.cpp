@@ -5,6 +5,7 @@
 #include "Source/Dsp/PrismProcessor.h"
 #include "Source/Dsp/PrismResponseModel.h"
 #include "Source/PluginProcessor.h"
+#include "Source/Analysis/PrismAutoEq.h"
 #include "Source/Ui/AnalyzerFeatures.h"
 #include "Source/Ui/PrismGraph.h"
 
@@ -119,6 +120,18 @@ bool buffersAlmostEqual(const juce::AudioBuffer<float>& lhs,
                 return false;
 
     return true;
+}
+
+juce::Component* findChildComponentWithId(juce::Component& component, const juce::String& componentId)
+{
+    if (component.getComponentID() == componentId)
+        return &component;
+
+    for (int index = 0; index < component.getNumChildComponents(); ++index)
+        if (auto* found = findChildComponentWithId(*component.getChildComponent(index), componentId))
+            return found;
+
+    return nullptr;
 }
 
 void disableSidechainForProcessorTest(kratomix::PrismEqAudioProcessor& processor)
@@ -312,6 +325,10 @@ int main()
     expect(editor != nullptr && editor->getNumChildComponents() >= 8,
            "Prism editor should expose graph, global controls, output meter, and selected-band controls",
            failures);
+    if (editor != nullptr)
+        expect(findChildComponentWithId(*editor, "prismAutoRefineButton") != nullptr,
+               "Prism editor should expose the input Auto Refine action",
+               failures);
 
     {
         kratomix::prism::PrismGraph graph;
@@ -711,6 +728,64 @@ int main()
     }
 
     {
+        std::array<float, 240> quietSpectrum {};
+        quietSpectrum.fill(-92.0f);
+
+        const auto quietResult = kratomix::prism::makeInputAutoEqCurve(quietSpectrum);
+        expect(! quietResult.hasSignal,
+               "Input Auto Refine should reject noise-floor spectra",
+               failures);
+        expect(quietResult.count == 0,
+               "Input Auto Refine should not create bands without signal",
+               failures);
+
+        std::array<float, 240> resonantSpectrum {};
+        resonantSpectrum.fill(-46.0f);
+        resonantSpectrum[132] = -24.0f;
+        resonantSpectrum[133] = -23.0f;
+        resonantSpectrum[134] = -25.0f;
+
+        const auto resonantResult = kratomix::prism::makeInputAutoEqCurve(resonantSpectrum);
+        expect(resonantResult.hasSignal,
+               "Input Auto Refine should accept active input spectra",
+               failures);
+        expect(resonantResult.count == 1,
+               "Input Auto Refine should collapse nearby resonance bins into one suggestion",
+               failures);
+        if (resonantResult.count > 0)
+        {
+            const auto& suggestion = resonantResult.suggestions[0];
+            expect(suggestion.type == kratomix::prism::BandType::bell,
+                   "Input Auto Refine should use bell cuts for narrow resonances",
+                   failures);
+            expect(suggestion.gainDb < -1.0f && suggestion.gainDb >= -4.6f,
+                   "Input Auto Refine resonance suggestions should be conservative cuts",
+                   failures);
+            expect(suggestion.q >= 1.5f && suggestion.q <= 8.0f,
+                   "Input Auto Refine should keep resonance Q in a musical range",
+                   failures);
+            expect(suggestion.frequency > 700.0f && suggestion.frequency < 1400.0f,
+                   "Input Auto Refine should map resonance bin to the expected input frequency area",
+                   failures);
+        }
+
+        std::array<float, 240> rumbleSpectrum {};
+        rumbleSpectrum.fill(-58.0f);
+        for (size_t index = 0; index < 28; ++index)
+            rumbleSpectrum[index] = -31.0f;
+
+        const auto rumbleResult = kratomix::prism::makeInputAutoEqCurve(rumbleSpectrum);
+        expect(rumbleResult.count > 0 && rumbleResult.suggestions[0].type == kratomix::prism::BandType::highPass,
+               "Input Auto Refine should add a high-pass suggestion for obvious low-end rumble",
+               failures);
+
+        for (size_t index = 0; index < rumbleResult.count; ++index)
+            expect(rumbleResult.suggestions[index].gainDb <= 0.0f,
+                   "Input Auto Refine should not create automatic boosts in V1",
+                   failures);
+    }
+
+    {
         expect(kratomix::prism::prismLatencyFor(kratomix::prism::PhaseMode::zeroLatency,
                                                 kratomix::prism::QualityMode::native) == 0,
                "Native zero-latency mode should report no added latency",
@@ -752,6 +827,65 @@ int main()
                failures);
         expect(selectedBand == 1,
                "Graph should notify the editor when a band is selected",
+               failures);
+    }
+
+    {
+        kratomix::PrismEqAudioProcessor autoRefineProcessor;
+
+        kratomix::prism::PrismGraph graph;
+        graph.attachState(autoRefineProcessor.parameters);
+        graph.setBounds(0, 0, 900, 460);
+
+        const auto band01 = kratomix::prism::bandPrefix(1);
+        const auto band03 = kratomix::prism::bandPrefix(3);
+        autoRefineProcessor.parameters.getParameter(band01 + "Enabled")->setValueNotifyingHost(1.0f);
+        autoRefineProcessor.parameters.getParameter(band01 + "DynamicEnabled")->setValueNotifyingHost(1.0f);
+        autoRefineProcessor.parameters.getParameter(band01 + "DynamicRange")->setValueNotifyingHost(
+            autoRefineProcessor.parameters.getParameter(band01 + "DynamicRange")->convertTo0to1(-9.0f));
+        autoRefineProcessor.parameters.getParameter(band03 + "Enabled")->setValueNotifyingHost(1.0f);
+
+        expect(graph.hasActiveBands(),
+               "Auto Refine graph API should detect an active EQ curve before replacing it",
+               failures);
+
+        std::array<float, kratomix::prism::autoEqSpectrumBinCount> spectrum {};
+        spectrum.fill(-46.0f);
+        spectrum[132] = -24.0f;
+        spectrum[133] = -23.0f;
+        spectrum[134] = -25.0f;
+
+        const auto applyResult = graph.applyInputAutoRefineForSpectrum(spectrum);
+        expect(applyResult == kratomix::prism::AutoRefineApplyResult::refined,
+               "Auto Refine should report that a usable input curve was applied",
+               failures);
+        expect(autoRefineProcessor.parameters.getRawParameterValue(band01 + "Enabled")->load() > 0.5f,
+               "Auto Refine should write the first suggestion into band 01",
+               failures);
+        expect(std::abs(autoRefineProcessor.parameters.getRawParameterValue(band01 + "Type")->load()
+                        - static_cast<float>(kratomix::prism::BandType::bell)) < 1.0e-6f,
+               "Auto Refine should write resonance suggestions as bell bands",
+               failures);
+        expect(autoRefineProcessor.parameters.getRawParameterValue(band01 + "Gain")->load() < -1.0f,
+               "Auto Refine should write conservative cut gain into band 01",
+               failures);
+        expect(autoRefineProcessor.parameters.getRawParameterValue(band01 + "DynamicEnabled")->load() < 0.5f,
+               "Auto Refine should reset generated bands to static mode",
+               failures);
+        expect(std::abs(autoRefineProcessor.parameters.getRawParameterValue(band01 + "DynamicRange")->load()) < 1.0e-6f,
+               "Auto Refine should reset generated band dynamic range",
+               failures);
+        expect(autoRefineProcessor.parameters.getRawParameterValue(band03 + "Enabled")->load() < 0.5f,
+               "Auto Refine should disable old bands beyond the generated starter curve",
+               failures);
+
+        spectrum.fill(-90.0f);
+        const auto noSignalResult = graph.applyInputAutoRefineForSpectrum(spectrum);
+        expect(noSignalResult == kratomix::prism::AutoRefineApplyResult::noSignal,
+               "Auto Refine should report no signal without changing the current curve",
+               failures);
+        expect(autoRefineProcessor.parameters.getRawParameterValue(band01 + "Enabled")->load() > 0.5f,
+               "No-signal Auto Refine should leave the current curve untouched",
                failures);
     }
 

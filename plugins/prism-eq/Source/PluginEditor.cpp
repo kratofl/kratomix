@@ -101,6 +101,20 @@ PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& 
     styleCaption(movementLabel);
     addAndMakeVisible(movementLabel);
 
+    autoRefineButton.setComponentID("prismAutoRefineButton");
+    autoRefineButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(37, 29, 23));
+    autoRefineButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour::fromRGB(54, 39, 25));
+    autoRefineButton.setColour(juce::TextButton::textColourOffId, accentColour());
+    autoRefineButton.onClick = [this]
+    {
+        triggerAutoRefine();
+    };
+    addAndMakeVisible(autoRefineButton);
+
+    autoRefineStatusLabel.setText("", juce::dontSendNotification);
+    styleCaption(autoRefineStatusLabel);
+    addAndMakeVisible(autoRefineStatusLabel);
+
     for (auto* label : { &speedLabel, &rangeLabelGlobal, &scaleLabel })
     {
         styleCaption(*label);
@@ -221,6 +235,9 @@ void PrismEqAudioProcessorEditor::resized()
     liveLabel.setBounds(top.removeFromLeft(36).reduced(0, 8));
     detectorLabel.setBounds(top.removeFromLeft(82).reduced(0, 8));
     movementLabel.setBounds(top.removeFromLeft(92).reduced(0, 8));
+    top.removeFromLeft(8);
+    autoRefineButton.setBounds(top.removeFromLeft(76).reduced(0, 7));
+    autoRefineStatusLabel.setBounds(top.removeFromLeft(70).reduced(6, 8));
 
     bounds.removeFromTop(14);
 
@@ -411,6 +428,39 @@ void PrismEqAudioProcessorEditor::configureValueSlider(juce::Slider& slider)
     slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour::fromRGB(250, 231, 202));
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour::fromRGBA(28, 23, 21, 160));
+}
+
+void PrismEqAudioProcessorEditor::triggerAutoRefine()
+{
+    if (! graph.hasActiveBands())
+    {
+        applyAutoRefineNow();
+        return;
+    }
+
+    const juce::Component::SafePointer<PrismEqAudioProcessorEditor> safeThis(this);
+    auto options = juce::MessageBoxOptions()
+                       .withIconType(juce::MessageBoxIconType::WarningIcon)
+                       .withTitle("Replace current EQ curve?")
+                       .withMessage("")
+                       .withButton("Replace")
+                       .withButton("Cancel")
+                       .withAssociatedComponent(this);
+
+    juce::AlertWindow::showAsync(options, [safeThis](int result)
+    {
+        if (safeThis == nullptr || result != 1)
+            return;
+
+        safeThis->applyAutoRefineNow();
+    });
+}
+
+void PrismEqAudioProcessorEditor::applyAutoRefineNow()
+{
+    const auto result = graph.applyInputAutoRefine();
+    autoRefineStatusLabel.setText(result == prism::AutoRefineApplyResult::refined ? "REFINED" : "NO SIGNAL",
+                                  juce::dontSendNotification);
 }
 
 void PrismEqAudioProcessorEditor::timerCallback()

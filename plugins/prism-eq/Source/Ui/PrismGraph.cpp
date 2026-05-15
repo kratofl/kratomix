@@ -363,6 +363,28 @@ bool PrismGraph::deleteSelectedBand()
     return true;
 }
 
+bool PrismGraph::hasActiveBands() const
+{
+    if (state == nullptr)
+        return false;
+
+    for (int index = 1; index <= maxBands; ++index)
+        if (bandEnabled(index))
+            return true;
+
+    return false;
+}
+
+AutoRefineApplyResult PrismGraph::applyInputAutoRefine()
+{
+    return applyInputAutoRefineForSpectrum(preSpectrum);
+}
+
+AutoRefineApplyResult PrismGraph::applyInputAutoRefineForSpectrum(const std::array<float, autoEqSpectrumBinCount>& spectrumDb)
+{
+    return applyAutoEqResult(makeInputAutoEqCurve(spectrumDb));
+}
+
 void PrismGraph::clearSelection()
 {
     setSelectedBand(0);
@@ -594,6 +616,45 @@ void PrismGraph::drawHoverReadout(juce::Graphics& g, juce::Rectangle<float> boun
     g.setFont(juce::FontOptions(10.0f));
     g.setColour(juce::Colours::white.withAlpha(0.82f));
     g.drawText(peakLabel, labelBounds.reduced(7.0f, 1.0f).toNearestInt(), juce::Justification::centredLeft);
+}
+
+AutoRefineApplyResult PrismGraph::applyAutoEqResult(const AutoEqResult& result)
+{
+    if (state == nullptr || ! result.hasSignal || result.count == 0)
+        return AutoRefineApplyResult::noSignal;
+
+    for (int index = 1; index <= maxBands; ++index)
+    {
+        const auto prefix = bandPrefix(index);
+        setParameterValue(prefix + "Enabled", 0.0f);
+        setParameterValue(prefix + "Type", static_cast<float>(BandType::bell));
+        setParameterValue(prefix + "Frequency", 1000.0f);
+        setParameterValue(prefix + "Gain", 0.0f);
+        setParameterValue(prefix + "Q", 1.0f);
+        setParameterValue(prefix + "DynamicEnabled", 0.0f);
+        setParameterValue(prefix + "DynamicRange", 0.0f);
+        setParameterValue(prefix + "Threshold", -24.0f);
+        setParameterValue(prefix + "Attack", 20.0f);
+        setParameterValue(prefix + "Release", 120.0f);
+        setParameterValue(prefix + "SidechainSource", static_cast<float>(SidechainSource::main));
+        setParameterValue(prefix + "Solo", 0.0f);
+    }
+
+    const auto bandsToWrite = juce::jmin(result.count, static_cast<size_t>(maxBands));
+    for (size_t index = 0; index < bandsToWrite; ++index)
+    {
+        const auto prefix = bandPrefix(static_cast<int>(index) + 1);
+        const auto& suggestion = result.suggestions[index];
+        setParameterValue(prefix + "Type", static_cast<float>(suggestion.type));
+        setParameterValue(prefix + "Frequency", suggestion.frequency);
+        setParameterValue(prefix + "Gain", suggestion.gainDb);
+        setParameterValue(prefix + "Q", suggestion.q);
+        setParameterValue(prefix + "Enabled", 1.0f);
+    }
+
+    setSelectedBand(bandsToWrite > 0 ? 1 : 0);
+    repaint();
+    return AutoRefineApplyResult::refined;
 }
 
 float PrismGraph::frequencyForAnalyzerBin(int binIndex)

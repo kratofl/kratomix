@@ -15,6 +15,8 @@ set(KRATOMIX_PLUGIN_SOURCES
     Source/PluginProcessor.cpp
     Source/PluginEditor.h
     Source/PluginEditor.cpp
+    Source/Analysis/PrismAutoEq.h
+    Source/Analysis/PrismAutoEq.cpp
     Source/Dsp/PrismTypes.h
     Source/Dsp/PrismLatency.h
     Source/Dsp/PrismFilterDesign.h

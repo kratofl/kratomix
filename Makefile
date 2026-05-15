@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(dir $(firstword $(MAKEFILE_LIST))))
 
 CMAKE ?= cmake
 PYTHON ?= python3
+MAKE_BIN ?= $(MAKE)
 CMAKE_GENERATOR ?= Unix Makefiles
 BUILD_DIR ?= build
 CONFIG ?= Release

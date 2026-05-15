@@ -2,17 +2,31 @@
 
 Kratomix is a JUCE-based plugin monorepo for Logic Pro-first audio effects on macOS. The root repo now carries the shared CMake/Make tooling, plugin metadata contract, and template generator for the full Kratomix line.
 
+## Kratomix Prism EQ
+
+![Kratomix Prism EQ editor](plugins/prism-eq/Docs/prism-eq-editor.png)
+
+Kratomix Prism EQ is a graph-first dynamic equalizer with live pre/post/sidechain analyzer views, signed dynamic band movement, quality modes, oversampling, and a linear-phase processing path.
+
 ## Download & Install
 
 Download the latest release from the [Releases](https://github.com/kratofl/kratomix/releases) page.
 
-Each plugin ships as a separate ZIP containing `.component` (AU) and `.vst3` formats.
+Each plugin ships as a separate macOS `.pkg` installer.
 
 **Installation:**
-1. Unzip the downloaded file
-2. Move `.component` to `~/Library/Audio/Plug-Ins/Components/`
-3. Move `.vst3` to `~/Library/Audio/Plug-Ins/VST3/`
-4. Restart your DAW and run a plugin scan
+1. Download the `.pkg` for the plugin.
+2. Open the installer and follow the prompts.
+3. Restart your DAW and run a plugin scan if the host does not rescan automatically.
+
+Installers place plugin bundles in the standard systemwide macOS audio locations:
+
+```text
+/Library/Audio/Plug-Ins/Components/
+/Library/Audio/Plug-Ins/VST3/
+```
+
+Updates use the same installer flow. A newer package replaces the previous plugin bundle at the same systemwide path.
 
 ## Layout
 
@@ -53,12 +67,22 @@ make run PLUGIN=velvet-channel
 make validate PLUGIN=velvet-channel
 ```
 
-Create a release zip for one plugin:
+Create local installer packages:
 
 ```bash
-make package PLUGIN=velvet-channel
-make release PLUGIN=velvet-channel
+make installer VERSION=1.2.3
+make installer VERSION=1.2.3 PLUGIN=velvet-channel
 ```
+
+Create and publish a GitHub release:
+
+```bash
+make release VERSION=1.2.3
+make release VERSION=1.2.3 PLUGIN=prism-eq
+make release VERSION=1.2.3 PRERELEASE=1
+```
+
+`make release` requires a clean git working tree, creates versioned `.pkg` files in `dist/`, creates and pushes the release tag, and publishes the packages with GitHub CLI. If `PLUGIN` is omitted, every registered plugin is released.
 
 Use a local JUCE checkout:
 

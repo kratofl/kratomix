@@ -11,6 +11,7 @@ plugins/*/build/
 *.xcworkspace/
 DerivedData/
 JuceLibraryCode/
+docs/superpowers/
 *.component
 *.vst3
 *.appex

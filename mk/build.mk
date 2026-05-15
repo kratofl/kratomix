@@ -1,4 +1,4 @@
-.PHONY: help list configure build test run validate package release clean
+.PHONY: help list configure build test run validate package installer release clean
 
 help:
 	@printf '%s\n' \
@@ -12,7 +12,8 @@ help:
 		'  make run PLUGIN=<slug> [BUILD_DIR=build] [CONFIG=Release] [JOBS=4]' \
 		'  make validate PLUGIN=<slug> [BUILD_DIR=build] [CONFIG=Release] [JOBS=4]' \
 		'  make package PLUGIN=<slug> [BUILD_DIR=build] [CONFIG=Release] [DIST_DIR=dist]' \
-		'  make release PLUGIN=<slug> [BUILD_DIR=build] [CONFIG=Release] [DIST_DIR=dist]' \
+		'  make installer [PLUGIN=<slug>|all] VERSION=x.x.x [BUILD_DIR=build] [CONFIG=Release] [DIST_DIR=dist]' \
+		'  make release [PLUGIN=<slug>|all] VERSION=x.x.x [PRERELEASE=1]' \
 		'  make clean [BUILD_DIR=build]' \
 		'  make new-plugin SLUG=<slug> NAME="Kratomix ..." CODE=<FourCC> [BUNDLE=com.kratomix.<slug>]' \
 		'' \

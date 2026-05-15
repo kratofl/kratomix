@@ -4,10 +4,17 @@
 
 #include <optional>
 
+#include "Analysis/PrismAutoEq.h"
 #include "Dsp/PrismProcessor.h"
 
 namespace kratomix::prism
 {
+enum class AutoRefineApplyResult
+{
+    noSignal,
+    refined
+};
+
 class PrismGraph final : public juce::Component,
                          private juce::Timer
 {
@@ -32,6 +39,9 @@ public:
     bool deleteSelectedBand();
     juce::Point<float> pointForFrequencyAndGain(float frequency, float gainDb) const;
     int getSelectedBand() const noexcept { return selectedBand; }
+    bool hasActiveBands() const;
+    AutoRefineApplyResult applyInputAutoRefine();
+    AutoRefineApplyResult applyInputAutoRefineForSpectrum(const std::array<float, autoEqSpectrumBinCount>& spectrumDb);
     void clearSelection();
 
     std::function<void(int)> onSelectedBandChanged;
@@ -62,6 +72,7 @@ private:
                           float rangeDb) const;
     void drawMaskingOverlay(juce::Graphics& g, juce::Rectangle<float> bounds) const;
     void drawHoverReadout(juce::Graphics& g, juce::Rectangle<float> bounds, int analyzerMode) const;
+    AutoRefineApplyResult applyAutoEqResult(const AutoEqResult& result);
     static float frequencyForAnalyzerBin(int binIndex);
     static int analyzerBinForFrequency(float frequency);
 

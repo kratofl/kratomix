@@ -28,6 +28,8 @@ private:
     void rebuildBandAttachments(int oneBasedBandIndex);
     void setBandControlsEnabled(bool shouldBeEnabled);
     void configureValueSlider(juce::Slider& slider);
+    void triggerAutoRefine();
+    void applyAutoRefineNow();
     void timerCallback() override;
 
     PrismEqAudioProcessor& pluginProcessor;
@@ -46,6 +48,8 @@ private:
     juce::Label liveLabel;
     juce::Label detectorLabel;
     juce::Label movementLabel;
+    juce::TextButton autoRefineButton { "REFINE" };
+    juce::Label autoRefineStatusLabel;
     juce::Label speedLabel;
     juce::Label rangeLabelGlobal;
     juce::Label scaleLabel;
