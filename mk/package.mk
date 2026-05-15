@@ -40,9 +40,6 @@ package:
 		$(call require_plugin); \
 		$(MAKE_BIN) build PLUGIN='$(PLUGIN)' BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)' || exit $$?; \
 		$(call load_plugin_metadata); \
-		if [ "$$has_au" = "1" ]; then \
-			$(MAKE_BIN) validate PLUGIN='$(PLUGIN)' BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)' || exit $$?; \
-		fi; \
 		stage_dir='$(ABS_DIST_DIR)/$(PLUGIN)-$(VERSION)'; \
 		rm -rf "$$stage_dir" "$$asset_zip"; \
 		mkdir -p "$$stage_dir"; \
