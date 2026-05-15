@@ -22,7 +22,7 @@ fi
 endef
 
 define load_plugin_metadata
-metadata="$$( $(CMAKE) -DKRATOMIX_ROOT='$(ROOT_DIR)' -DKRATOMIX_PLUGIN_SLUG='$(PLUGIN)' -DKRATOMIX_BUILD_DIR='$(ABS_BUILD_DIR)' -DKRATOMIX_BUILD_CONFIG='$(CONFIG)' -DKRATOMIX_RELEASE_VERSION='$(VERSION)' -P '$(METADATA_SCRIPT)' 2>&1 )" || { \
+metadata="$$( $(CMAKE) -DKRATOMIX_ROOT='$(ROOT_DIR)' -DKRATOMIX_PLUGIN_SLUG='$(PLUGIN)' -DKRATOMIX_BUILD_DIR='$(ABS_BUILD_DIR)' -DKRATOMIX_BUILD_CONFIG='$(CONFIG)' -DKRATOMIX_RELEASE_VERSION='$(VERSION)' -DKRATOMIX_RELEASE_TAG='$(RELEASE_TAG)' -P '$(METADATA_SCRIPT)' 2>&1 )" || { \
 	printf '%s\n' "$$metadata" >&2; \
 	exit 2; \
 }; \
@@ -45,7 +45,7 @@ fi
 endef
 
 define require_release_tools
-for tool in git gh pkgbuild ditto; do \
+for tool in git gh ditto zip; do \
 	if ! command -v "$$tool" >/dev/null 2>&1; then \
 		echo "Target '$@' requires $$tool." >&2; \
 		exit 2; \

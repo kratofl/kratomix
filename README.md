@@ -12,21 +12,23 @@ Kratomix Prism EQ is a graph-first dynamic equalizer with live pre/post/sidechai
 
 Download the latest release from the [Releases](https://github.com/kratofl/kratomix/releases) page.
 
-Each plugin ships as a separate macOS `.pkg` installer.
+Each release ships a Kratomix Installer GUI plus separate plugin ZIP assets.
 
 **Installation:**
-1. Download the `.pkg` for the plugin.
-2. Open the installer and follow the prompts.
-3. Restart your DAW and run a plugin scan if the host does not rescan automatically.
+1. Download `Kratomix-Installer-<version>-macos.zip`.
+2. Unzip and open `Kratomix Installer.app`.
+3. Load the default release manifest.
+4. Select plugins and formats.
+5. Install, then restart your DAW and run a plugin scan if the host does not rescan automatically.
 
-Installers place plugin bundles in the standard systemwide macOS audio locations:
+The installer places plugin bundles in the standard systemwide macOS audio locations:
 
 ```text
 /Library/Audio/Plug-Ins/Components/
 /Library/Audio/Plug-Ins/VST3/
 ```
 
-Updates use the same installer flow. A newer package replaces the previous plugin bundle at the same systemwide path.
+The installer app is unsigned. On first launch, macOS may require right-clicking the app and choosing Open. Updates use the same installer flow. A newer plugin ZIP replaces the previous plugin bundle at the same systemwide path.
 
 ## Layout
 
@@ -67,11 +69,12 @@ make run PLUGIN=velvet-channel
 make validate PLUGIN=velvet-channel
 ```
 
-Create local installer packages:
+Create local release assets:
 
 ```bash
+make package VERSION=1.2.3
+make manifest VERSION=1.2.3
 make installer VERSION=1.2.3
-make installer VERSION=1.2.3 PLUGIN=velvet-channel
 ```
 
 Create and publish a GitHub release:
@@ -82,7 +85,7 @@ make release VERSION=1.2.3 PLUGIN=prism-eq
 make release VERSION=1.2.3 PRERELEASE=1
 ```
 
-`make release` requires a clean git working tree, creates versioned `.pkg` files in `dist/`, creates and pushes the release tag, and publishes the packages with GitHub CLI. If `PLUGIN` is omitted, every registered plugin is released.
+`make release` requires a clean git working tree, creates versioned plugin ZIP files, `manifest.json`, and `Kratomix-Installer-<version>-macos.zip` in `dist/`, creates and pushes the release tag, and publishes the assets with GitHub CLI. If `PLUGIN` is omitted, every registered plugin is released.
 
 Use a local JUCE checkout:
 
