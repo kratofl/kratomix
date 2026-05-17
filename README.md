@@ -14,21 +14,34 @@ Download the latest release from the [Releases](https://github.com/kratofl/krato
 
 Each release ships a Kratomix Installer GUI plus separate plugin ZIP assets.
 
-**Installation:**
-1. Download `Kratomix-Installer-<version>-macos.zip`.
-2. Unzip and open `Kratomix Installer.app`.
-3. Load the default release manifest.
-4. Select plugins and formats.
-5. Install, then restart your DAW and run a plugin scan if the host does not rescan automatically.
+![Kratomix Installer](docs/assets/installer.png)
 
-The installer places plugin bundles in the standard systemwide macOS audio locations:
+**Installation:**
+1. Download `Kratomix-Installer-<version>-macos.zip` from the release.
+2. Unzip it. The archive contains `Kratomix Installer.app` directly.
+3. Open `Kratomix Installer.app`.
+4. Keep the default manifest URL unless you need a local/offline manifest.
+5. Select the plugins and formats you want to install.
+6. Choose the install location in Settings: `System-wide` or `User only`.
+7. Click `Install Selected`, then restart Logic Pro.
+
+Kratomix targets Logic Pro first. The installer can place AU and VST3 bundles, but Logic Pro uses AU.
+
+System-wide installation writes to:
 
 ```text
 /Library/Audio/Plug-Ins/Components/
 /Library/Audio/Plug-Ins/VST3/
 ```
 
-The installer app is unsigned. On first launch, macOS may require right-clicking the app and choosing Open. Updates use the same installer flow. A newer plugin ZIP replaces the previous plugin bundle at the same systemwide path.
+User-only installation writes to:
+
+```text
+~/Library/Audio/Plug-Ins/Components/
+~/Library/Audio/Plug-Ins/VST3/
+```
+
+The installer app is unsigned. On first launch, macOS may require right-clicking the app and choosing Open. Updates use the same installer flow. A newer plugin ZIP replaces the previous plugin bundle at the chosen install location.
 
 ## Layout
 
@@ -85,7 +98,7 @@ make release VERSION=1.2.3 PLUGIN=prism-eq
 make release VERSION=1.2.3 PRERELEASE=1
 ```
 
-`make release` requires a clean git working tree, creates versioned plugin ZIP files, `manifest.json`, and `Kratomix-Installer-<version>-macos.zip` in `dist/`, creates and pushes the release tag, and publishes the assets with GitHub CLI. If `PLUGIN` is omitted, every registered plugin is released.
+`make release` requires a clean git working tree, creates versioned plugin ZIP files, `manifest.json`, `Kratomix-Installer-<version>-macos.zip`, `INSTALL.md`, and `kratomix-installer-screenshot.png` in `dist/`, creates and pushes the release tag, and publishes the assets with GitHub CLI. Release notes are generated from `dist/RELEASE_NOTES.md` and include the installer screenshot. If `PLUGIN` is omitted, every registered plugin is released.
 
 Use a local JUCE checkout:
 

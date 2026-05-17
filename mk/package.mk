@@ -1,4 +1,4 @@
-.PHONY: package manifest installer release
+.PHONY: package manifest installer release-docs release
 
 DIST_DIR ?= dist
 ABS_DIST_DIR = $(if $(filter /%,$(DIST_DIR)),$(DIST_DIR),$(ROOT_DIR)/$(DIST_DIR))
@@ -6,6 +6,10 @@ INSTALLER_DIR := $(ROOT_DIR)/tools/kratomix-installer
 INSTALLER_BUILD_DIR := $(ABS_DIST_DIR)/Kratomix Installer.app
 INSTALLER_ASSET := $(ABS_DIST_DIR)/Kratomix-Installer-$(VERSION)-macos.zip
 MANIFEST_PATH := $(ABS_DIST_DIR)/manifest.json
+INSTALLER_SCREENSHOT_SOURCE := $(ROOT_DIR)/docs/assets/installer.png
+RELEASE_INSTALL_GUIDE := $(ABS_DIST_DIR)/INSTALL.md
+RELEASE_NOTES_PATH := $(ABS_DIST_DIR)/RELEASE_NOTES.md
+RELEASE_SCREENSHOT := $(ABS_DIST_DIR)/kratomix-installer-screenshot.png
 
 define require_ditto
 if ! command -v ditto >/dev/null 2>&1; then \
@@ -38,7 +42,7 @@ package:
 		done; \
 	else \
 		$(call require_plugin); \
-		$(MAKE_BIN) build PLUGIN='$(PLUGIN)' BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)' || exit $$?; \
+		$(MAKE_BIN) build PLUGIN='$(PLUGIN)' VERSION='$(VERSION)' BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)' || exit $$?; \
 		$(call load_plugin_metadata); \
 		stage_dir='$(ABS_DIST_DIR)/$(PLUGIN)-$(VERSION)'; \
 		rm -rf "$$stage_dir" "$$asset_zip"; \
@@ -116,6 +120,8 @@ installer:
 		'  <string>Kratomix Installer</string>' \
 		'  <key>CFBundleDisplayName</key>' \
 		'  <string>Kratomix Installer</string>' \
+		'  <key>CFBundleIconFile</key>' \
+		'  <string>AppIcon</string>' \
 		'  <key>CFBundlePackageType</key>' \
 		'  <string>APPL</string>' \
 		'  <key>CFBundleShortVersionString</key>' \
@@ -130,8 +136,72 @@ installer:
 	@if [ -f '$(INSTALLER_DIR)/assets/icon.svg' ]; then \
 		COPYFILE_DISABLE=1 ditto --norsrc '$(INSTALLER_DIR)/assets/icon.svg' '$(INSTALLER_BUILD_DIR)/Contents/Resources/icon.svg'; \
 	fi
-	@cd '$(ABS_DIST_DIR)' && COPYFILE_DISABLE=1 ditto -c -k --norsrc "Kratomix Installer.app" '$(INSTALLER_ASSET)'
+	@if [ -f '$(INSTALLER_DIR)/assets/AppIcon.icns' ]; then \
+		COPYFILE_DISABLE=1 ditto --norsrc '$(INSTALLER_DIR)/assets/AppIcon.icns' '$(INSTALLER_BUILD_DIR)/Contents/Resources/AppIcon.icns'; \
+	fi
+	@cd '$(ABS_DIST_DIR)' && COPYFILE_DISABLE=1 ditto -c -k --norsrc --keepParent "Kratomix Installer.app" '$(INSTALLER_ASSET)'
 	@echo "Created $(INSTALLER_ASSET)"
+
+release-docs:
+	@$(call require_release_version)
+	@mkdir -p '$(ABS_DIST_DIR)'
+	@if [ ! -f '$(INSTALLER_SCREENSHOT_SOURCE)' ]; then \
+		echo "Missing installer screenshot: $(INSTALLER_SCREENSHOT_SOURCE)" >&2; \
+		exit 2; \
+	fi
+	@COPYFILE_DISABLE=1 ditto --norsrc '$(INSTALLER_SCREENSHOT_SOURCE)' '$(RELEASE_SCREENSHOT)'
+	@$(call compute_release_tag); \
+	screenshot_url="https://github.com/kratofl/kratomix/releases/download/$$tag/kratomix-installer-screenshot.png"; \
+	printf '%s\n' \
+		'# Kratomix Installation' \
+		'' \
+		'![Kratomix Installer]('"$$screenshot_url"')' \
+		'' \
+		'1. Download `Kratomix-Installer-$(VERSION)-macos.zip` from this release.' \
+		'2. Unzip it. The archive contains `Kratomix Installer.app` directly.' \
+		'3. Open `Kratomix Installer.app`.' \
+		'4. Keep the default manifest URL unless you need a local/offline manifest.' \
+		'5. Select the plugins and formats you want to install.' \
+		'6. Choose the install location in Settings: `System-wide` or `User only`.' \
+		'7. Click `Install Selected`, then restart Logic Pro.' \
+		'' \
+		'For now, Kratomix targets Logic Pro first. The installer can place AU and VST3 bundles, but Logic Pro uses AU.' \
+		'' \
+		'The installer app is unsigned. If macOS blocks the first launch, right-click `Kratomix Installer.app` and choose `Open`.' \
+		'' \
+		'System-wide installation writes to:' \
+		'' \
+		'```text' \
+		'/Library/Audio/Plug-Ins/Components/' \
+		'/Library/Audio/Plug-Ins/VST3/' \
+		'```' \
+		'' \
+		'User-only installation writes to:' \
+		'' \
+		'```text' \
+		'~/Library/Audio/Plug-Ins/Components/' \
+		'~/Library/Audio/Plug-Ins/VST3/' \
+		'```' \
+		> '$(RELEASE_INSTALL_GUIDE)'; \
+	printf '%s\n' \
+		'# '"$$release_title" \
+		'' \
+		'![Kratomix Installer]('"$$screenshot_url"')' \
+		'' \
+		'## Install' \
+		'' \
+		'1. Download `Kratomix-Installer-$(VERSION)-macos.zip`.' \
+		'2. Unzip it and open `Kratomix Installer.app`.' \
+		'3. Select the plugins and formats you want.' \
+		'4. Click `Install Selected`, then restart Logic Pro.' \
+		'' \
+		'For detailed steps, download `INSTALL.md` from this release.' \
+		'' \
+		'The installer is unsigned. If macOS blocks it, right-click the app and choose `Open`.' \
+		> '$(RELEASE_NOTES_PATH)'; \
+	echo "Created $(RELEASE_INSTALL_GUIDE)"; \
+	echo "Created $(RELEASE_NOTES_PATH)"; \
+	echo "Created $(RELEASE_SCREENSHOT)"
 
 release:
 	@$(call require_release_version)
@@ -143,7 +213,8 @@ release:
 	$(MAKE_BIN) package PLUGIN='$(PLUGIN)' VERSION='$(VERSION)' RELEASE_TAG="$$tag" BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)' DIST_DIR='$(DIST_DIR)' || exit $$?; \
 	$(MAKE_BIN) manifest PLUGIN='$(PLUGIN)' VERSION='$(VERSION)' RELEASE_TAG="$$tag" BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' DIST_DIR='$(DIST_DIR)' || exit $$?; \
 	$(MAKE_BIN) installer VERSION='$(VERSION)' DIST_DIR='$(DIST_DIR)' || exit $$?; \
-	assets="'$(MANIFEST_PATH)' '$(INSTALLER_ASSET)'"; \
+	$(MAKE_BIN) release-docs PLUGIN='$(PLUGIN)' VERSION='$(VERSION)' RELEASE_TAG="$$tag" DIST_DIR='$(DIST_DIR)' || exit $$?; \
+	assets="'$(MANIFEST_PATH)' '$(INSTALLER_ASSET)' '$(RELEASE_INSTALL_GUIDE)' '$(RELEASE_SCREENSHOT)'"; \
 	if [ -z "$(PLUGIN)" ] || [ "$(PLUGIN)" = "all" ]; then \
 		for slug in $(PLUGIN_SLUGS); do \
 			metadata="$$( $(CMAKE) -DKRATOMIX_ROOT='$(ROOT_DIR)' -DKRATOMIX_PLUGIN_SLUG="$$slug" -DKRATOMIX_BUILD_DIR='$(ABS_BUILD_DIR)' -DKRATOMIX_BUILD_CONFIG='$(CONFIG)' -DKRATOMIX_RELEASE_VERSION='$(VERSION)' -DKRATOMIX_RELEASE_TAG="$$tag" -P '$(METADATA_SCRIPT)' 2>&1 )" || { printf '%s\n' "$$metadata" >&2; exit 2; }; \
@@ -160,4 +231,4 @@ release:
 	if [ "$(PRERELEASE)" = "1" ]; then prerelease_flag="--prerelease"; fi; \
 	git tag -a "$$tag" -m "$$release_title"; \
 	git push origin "$$tag"; \
-	eval "gh release create \"$$tag\" $$assets --title \"$$release_title\" --notes \"$$release_notes\" $$prerelease_flag"
+	eval "gh release create \"$$tag\" $$assets --title \"$$release_title\" --notes-file '$(RELEASE_NOTES_PATH)' $$prerelease_flag"

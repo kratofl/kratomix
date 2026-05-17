@@ -65,6 +65,12 @@ PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& 
     titleLabel.setColour(juce::Label::textColourId, accentColour());
     addAndMakeVisible(titleLabel);
 
+    versionLabel.setText(juce::String("v") + KRATOMIX_PLUGIN_VERSION_STRING, juce::dontSendNotification);
+    versionLabel.setJustificationType(juce::Justification::centredRight);
+    versionLabel.setFont(juce::FontOptions(11.5f, juce::Font::bold));
+    versionLabel.setColour(juce::Label::textColourId, juce::Colour::fromRGB(160, 146, 120));
+    addAndMakeVisible(versionLabel);
+
     analyzerLabel.setText("VIEW", juce::dontSendNotification);
     styleCaption(analyzerLabel);
     addAndMakeVisible(analyzerLabel);
@@ -220,6 +226,8 @@ void PrismEqAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds().reduced(24);
     auto top = bounds.removeFromTop(46);
+    versionLabel.setBounds(top.removeFromRight(80).reduced(0, 8));
+    top.removeFromRight(8);
     brandLabel.setBounds(top.removeFromLeft(150));
     titleLabel.setBounds(top.removeFromLeft(120));
     top.removeFromLeft(12);

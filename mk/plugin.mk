@@ -72,13 +72,11 @@ define compute_release_tag
 if [ -z "$(PLUGIN)" ] || [ "$(PLUGIN)" = "all" ]; then \
 	tag="v$(VERSION)"; \
 	release_title="Kratomix $(VERSION)"; \
-	release_notes="Kratomix $(VERSION) release."; \
 else \
 	$(call require_plugin); \
 	$(call load_plugin_metadata); \
 	tag="$(PLUGIN)-v$(VERSION)"; \
 	release_title="$${product_name} $(VERSION)"; \
-	release_notes="$${product_name} $(VERSION) release."; \
 fi
 endef
 

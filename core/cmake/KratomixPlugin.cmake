@@ -56,6 +56,7 @@ function(kratomix_add_plugin)
 
     juce_add_plugin(${KRATOMIX_TARGET}
         COMPANY_NAME "${KRATOMIX_COMPANY_NAME}"
+        VERSION "${KRATOMIX_PLUGIN_VERSION}"
         BUNDLE_ID "${KRATOMIX_BUNDLE_ID}"
         IS_SYNTH FALSE
         NEEDS_MIDI_INPUT FALSE
@@ -80,6 +81,7 @@ function(kratomix_add_plugin)
 
     target_compile_definitions(${KRATOMIX_TARGET}
         PUBLIC
+            KRATOMIX_PLUGIN_VERSION_STRING="${KRATOMIX_PLUGIN_VERSION}"
             JUCE_VST3_CAN_REPLACE_VST2=0
             JUCE_WEB_BROWSER=0
             JUCE_USE_CURL=0)
@@ -138,6 +140,7 @@ function(kratomix_add_plugin)
 
         target_compile_definitions(${test_target}
             PUBLIC
+                KRATOMIX_PLUGIN_VERSION_STRING="${KRATOMIX_PLUGIN_VERSION}"
                 JUCE_VST3_CAN_REPLACE_VST2=0
                 JUCE_WEB_BROWSER=0
                 JUCE_USE_CURL=0)

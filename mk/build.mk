@@ -14,6 +14,7 @@ help:
 		'  make package [PLUGIN=<slug>|all] VERSION=x.x.x [BUILD_DIR=build] [CONFIG=Release] [DIST_DIR=dist]' \
 		'  make manifest [PLUGIN=<slug>|all] VERSION=x.x.x [DIST_DIR=dist]' \
 		'  make installer VERSION=x.x.x [DIST_DIR=dist]' \
+		'  make release-docs [PLUGIN=<slug>|all] VERSION=x.x.x [DIST_DIR=dist]' \
 		'  make release [PLUGIN=<slug>|all] VERSION=x.x.x [PRERELEASE=1]' \
 		'  make clean [BUILD_DIR=build]' \
 		'  make new-plugin SLUG=<slug> NAME="Kratomix ..." CODE=<FourCC> [BUNDLE=com.kratomix.<slug>]' \
@@ -24,10 +25,10 @@ list:
 	@for slug in $(PLUGIN_SLUGS); do printf '%s\n' "$$slug"; done
 
 configure:
-	@$(CMAKE) -S '$(ROOT_DIR)' -B '$(ABS_BUILD_DIR)' -G '$(CMAKE_GENERATOR)' -DCMAKE_BUILD_TYPE='$(CONFIG)' $(if $(strip $(JUCE_DIR)),-DJUCE_DIR='$(JUCE_DIR)',)
+	@$(CMAKE) -S '$(ROOT_DIR)' -B '$(ABS_BUILD_DIR)' -G '$(CMAKE_GENERATOR)' -DCMAKE_BUILD_TYPE='$(CONFIG)' $(if $(strip $(VERSION)),-DKRATOMIX_RELEASE_VERSION='$(VERSION)',-UKRATOMIX_RELEASE_VERSION) $(if $(strip $(JUCE_DIR)),-DJUCE_DIR='$(JUCE_DIR)',)
 
 build:
-	@$(MAKE) configure BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)'
+	@$(MAKE) configure BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)' VERSION='$(VERSION)'
 	@if [ -z "$(PLUGIN)" ] || [ "$(PLUGIN)" = "all" ]; then \
 		$(CMAKE) --build '$(ABS_BUILD_DIR)' --target plugins-all --parallel '$(JOBS)'; \
 	else \

@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
@@ -75,6 +76,11 @@ type installJob struct {
 	target string
 	format string
 	name   string
+}
+
+type pluginInstallState struct {
+	AUVersion   string
+	VST3Version string
 }
 
 type installerUI struct {
@@ -336,7 +342,8 @@ func (ui *installerUI) plugins(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(material.CheckBox(ui.th, check, p.Name).Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								label := material.Body1(ui.th, fmt.Sprintf("Version %s", p.Version))
+								state := scanPluginInstallState(p, ui.scopeChoice.Value)
+								label := material.Body1(ui.th, formatInstallState(state, p.Version, pluginFormats(p)))
 								label.Color = mutedColor
 								label.TextSize = unit.Sp(13)
 								return label.Layout(gtx)
@@ -624,7 +631,8 @@ func runHeadless(options cliOptions) error {
 	if options.list {
 		fmt.Printf("%s %s from %s\n", m.Brand, m.Version, source)
 		for _, p := range selected {
-			fmt.Printf("%s\t%s\t%s\n", p.Slug, p.Version, availableFormatText(p))
+			state := scanPluginInstallState(p, options.scope)
+			fmt.Printf("%s\t%s\t%s\t%s\n", p.Slug, p.Version, availableFormatText(p), formatInstallState(state, p.Version, pluginFormats(p)))
 		}
 		return nil
 	}
@@ -714,17 +722,151 @@ func selectedFormats(au bool, vst3 bool) []string {
 }
 
 func availableFormatText(p plugin) string {
-	formats := make([]string, 0, 2)
-	if p.Formats["au"] {
-		formats = append(formats, "AU")
-	}
-	if p.Formats["vst3"] {
-		formats = append(formats, "VST3")
-	}
+	formats := pluginFormats(p)
 	if len(formats) == 0 {
 		return "No formats"
 	}
-	return strings.Join(formats, " + ")
+
+	labels := make([]string, 0, len(formats))
+	for _, format := range formats {
+		labels = append(labels, strings.ToUpper(format))
+	}
+	return strings.Join(labels, " + ")
+}
+
+func pluginFormats(p plugin) []string {
+	formats := make([]string, 0, 2)
+	if p.Formats["au"] {
+		formats = append(formats, "au")
+	}
+	if p.Formats["vst3"] {
+		formats = append(formats, "vst3")
+	}
+	return formats
+}
+
+func scanPluginInstallState(p plugin, scope string) pluginInstallState {
+	var state pluginInstallState
+	if p.Formats["au"] {
+		if base, err := installBasePath("au", scope); err == nil {
+			if version, ok := readBundleVersion(filepath.Join(base, p.Name+".component")); ok {
+				state.AUVersion = version
+			}
+		}
+	}
+	if p.Formats["vst3"] {
+		if base, err := installBasePath("vst3", scope); err == nil {
+			if version, ok := readBundleVersion(filepath.Join(base, p.Name+".vst3")); ok {
+				state.VST3Version = version
+			}
+		}
+	}
+	return state
+}
+
+func formatInstallState(state pluginInstallState, latest string, formats []string) string {
+	if state.AUVersion == "" && state.VST3Version == "" {
+		return "Not installed"
+	}
+	parts := make([]string, 0, len(formats))
+	for _, format := range formats {
+		switch format {
+		case "au":
+			parts = append(parts, formatSingleInstallState("AU", state.AUVersion, latest))
+		case "vst3":
+			parts = append(parts, formatSingleInstallState("VST3", state.VST3Version, latest))
+		}
+	}
+	return strings.Join(parts, " | ")
+}
+
+func formatSingleInstallState(format string, installed string, latest string) string {
+	if installed == "" {
+		return fmt.Sprintf("%s not installed", format)
+	}
+	if compareVersions(installed, latest) < 0 {
+		return fmt.Sprintf("%s %s -> %s update available", format, installed, latest)
+	}
+	return fmt.Sprintf("%s %s installed", format, installed)
+}
+
+func compareVersions(left string, right string) int {
+	leftParts := versionParts(left)
+	rightParts := versionParts(right)
+	maxParts := len(leftParts)
+	if len(rightParts) > maxParts {
+		maxParts = len(rightParts)
+	}
+	for i := 0; i < maxParts; i++ {
+		var leftValue int
+		var rightValue int
+		if i < len(leftParts) {
+			leftValue = leftParts[i]
+		}
+		if i < len(rightParts) {
+			rightValue = rightParts[i]
+		}
+		if leftValue < rightValue {
+			return -1
+		}
+		if leftValue > rightValue {
+			return 1
+		}
+	}
+	return strings.Compare(left, right)
+}
+
+func versionParts(version string) []int {
+	fields := strings.FieldsFunc(version, func(r rune) bool {
+		return r < '0' || r > '9'
+	})
+	parts := make([]int, 0, len(fields))
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		value, err := strconv.Atoi(field)
+		if err == nil {
+			parts = append(parts, value)
+		}
+	}
+	return parts
+}
+
+func readBundleVersion(bundlePath string) (string, bool) {
+	file, err := os.Open(filepath.Join(bundlePath, "Contents", "Info.plist"))
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+
+	decoder := xml.NewDecoder(file)
+	var lastKey string
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch start.Name.Local {
+		case "key":
+			var key string
+			if err := decoder.DecodeElement(&key, &start); err == nil {
+				lastKey = key
+			}
+		case "string":
+			var value string
+			if err := decoder.DecodeElement(&value, &start); err == nil &&
+				(lastKey == "CFBundleShortVersionString" || lastKey == "CFBundleVersion") &&
+				strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value), true
+			}
+		}
+	}
+	return "", false
 }
 
 func loadManifest(source string) (manifest, error) {

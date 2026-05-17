@@ -191,6 +191,12 @@ void VelvetChannelAudioProcessorEditor::paint(juce::Graphics& g)
     g.setFont(juce::FontOptions(12.5f, juce::Font::plain));
     g.drawText("SOURCE PREAMP COLOR", brand.toNearestInt().reduced(18, 10).withTrimmedTop(84).removeFromTop(18), juce::Justification::centredLeft);
 
+    g.setFont(juce::FontOptions(11.5f, juce::Font::bold));
+    g.setColour(engravingColour().withAlpha(0.78f));
+    g.drawText(juce::String("v") + KRATOMIX_PLUGIN_VERSION_STRING,
+               rackInt.reduced(32, 24).removeFromRight(82).removeFromBottom(20),
+               juce::Justification::centredRight);
+
     g.setColour(juce::Colours::black.withAlpha(0.12f));
     g.drawRoundedRectangle(meter.expanded(8.0f), 10.0f, 1.0f);
     g.drawLine(controls.getX(), controls.getY() - 10.0f, controls.getRight(), controls.getY() - 10.0f, 1.0f);

@@ -39,6 +39,7 @@ private:
 
     juce::Label brandLabel;
     juce::Label titleLabel;
+    juce::Label versionLabel;
     juce::Label analyzerLabel;
     juce::ComboBox analyzerModeBox;
     juce::Label phaseLabel;
