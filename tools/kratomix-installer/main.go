@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"image"
 	"image/color"
 	"io"
 	"net/http"
@@ -14,20 +15,34 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
+	"gioui.org/app"
+	"gioui.org/font"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/text"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
 )
 
 const defaultManifestURL = "https://github.com/kratofl/kratomix/releases/latest/download/manifest.json"
 
 var httpClient = &http.Client{Timeout: 12 * time.Second}
+
+var (
+	shellColor  = color.NRGBA{R: 8, G: 9, B: 11, A: 255}
+	panelColor  = color.NRGBA{R: 18, G: 19, B: 22, A: 255}
+	cardColor   = color.NRGBA{R: 27, G: 24, B: 22, A: 255}
+	lineColor   = color.NRGBA{R: 74, G: 52, B: 36, A: 255}
+	accentColor = color.NRGBA{R: 241, G: 194, B: 124, A: 255}
+	textColor   = color.NRGBA{R: 250, G: 231, B: 202, A: 255}
+	mutedColor  = color.NRGBA{R: 160, G: 146, B: 120, A: 255}
+)
 
 type manifest struct {
 	Schema     int      `json:"schema"`
@@ -46,28 +61,553 @@ type plugin struct {
 	Formats map[string]bool `json:"formats"`
 }
 
-type pluginRow struct {
-	plugin plugin
-	check  *widget.Check
-}
-
 type cliOptions struct {
 	headless bool
 	list     bool
 	manifest string
 	plugins  string
 	formats  string
+	scope    string
+}
+
+type installJob struct {
+	source string
+	target string
+	format string
+	name   string
+}
+
+type installerUI struct {
+	win *app.Window
+	th  *material.Theme
+
+	mu             sync.Mutex
+	current        manifest
+	manifestSource string
+	manifestLoaded bool
+	status         string
+	logLines       []string
+	installing     bool
+
+	activeTab      string
+	manifestEditor widget.Editor
+	pluginChecks   map[string]*widget.Bool
+	scopeChoice    widget.Enum
+	auCheck        widget.Bool
+	vst3Check      widget.Bool
+	pluginList     layout.List
+	logList        layout.List
+
+	installButton   widget.Clickable
+	refreshButton   widget.Clickable
+	settingsButton  widget.Clickable
+	installTab      widget.Clickable
+	settingsTab     widget.Clickable
+	selectAllButton widget.Clickable
+	clearButton     widget.Clickable
 }
 
 func parseCLIOptions() cliOptions {
-	options := cliOptions{manifest: defaultManifestURL, plugins: "all", formats: "au,vst3"}
+	options := cliOptions{manifest: defaultManifestURL, plugins: "all", formats: "au,vst3", scope: "system"}
 	flag.BoolVar(&options.headless, "headless", false, "run without the GUI")
 	flag.BoolVar(&options.list, "list", false, "list available plugins and exit")
 	flag.StringVar(&options.manifest, "manifest", defaultManifestURL, "release manifest URL or local path")
 	flag.StringVar(&options.plugins, "plugins", "all", "comma-separated plugin slugs or all")
 	flag.StringVar(&options.formats, "formats", "au,vst3", "comma-separated formats: au,vst3")
+	flag.StringVar(&options.scope, "scope", "system", "installation scope: system or user")
 	flag.Parse()
 	return options
+}
+
+func main() {
+	options := parseCLIOptions()
+	if options.headless {
+		if err := runHeadless(options); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	go runGUI(options)
+	app.Main()
+}
+
+func runGUI(options cliOptions) {
+	win := new(app.Window)
+	win.Option(app.Title("Kratomix Installer"), app.Decorated(true), app.Size(unit.Dp(920), unit.Dp(640)), app.MinSize(unit.Dp(760), unit.Dp(520)))
+
+	ui := newInstallerUI(win, options)
+	ui.startManifestLoad(options.manifest, true)
+
+	var ops op.Ops
+	for {
+		switch event := win.Event().(type) {
+		case app.DestroyEvent:
+			os.Exit(0)
+		case app.FrameEvent:
+			gtx := app.NewContext(&ops, event)
+			ui.layout(gtx)
+			event.Frame(gtx.Ops)
+		}
+	}
+}
+
+func newInstallerUI(win *app.Window, options cliOptions) *installerUI {
+	th := material.NewTheme()
+	th.Palette = material.Palette{
+		Bg:         shellColor,
+		Fg:         textColor,
+		ContrastBg: accentColor,
+		ContrastFg: color.NRGBA{R: 18, G: 14, B: 11, A: 255},
+	}
+	th.TextSize = unit.Sp(15)
+
+	ui := &installerUI{
+		win:          win,
+		th:           th,
+		status:       "Loading release manifest...",
+		activeTab:    "install",
+		pluginChecks: make(map[string]*widget.Bool),
+		pluginList:   layout.List{Axis: layout.Vertical},
+		logList:      layout.List{Axis: layout.Vertical},
+	}
+	ui.manifestEditor.SingleLine = true
+	ui.manifestEditor.SetText(options.manifest)
+	ui.auCheck.Value = true
+	ui.vst3Check.Value = true
+	ui.scopeChoice.Value = normalizedScope(options.scope)
+	return ui
+}
+
+func (ui *installerUI) layout(gtx layout.Context) layout.Dimensions {
+	ui.handleClicks(gtx)
+	paint.FillShape(gtx.Ops, shellColor, clip.Rect{Max: gtx.Constraints.Max}.Op())
+
+	return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(ui.header),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+			layout.Rigid(ui.tabs),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+			layout.Flexed(1, ui.body),
+		)
+	})
+}
+
+func (ui *installerUI) handleClicks(gtx layout.Context) {
+	if ui.installTab.Clicked(gtx) {
+		ui.activeTab = "install"
+	}
+	if ui.settingsTab.Clicked(gtx) {
+		ui.activeTab = "settings"
+	}
+	if ui.refreshButton.Clicked(gtx) {
+		ui.startManifestLoad(strings.TrimSpace(ui.manifestEditor.Text()), true)
+	}
+	if ui.selectAllButton.Clicked(gtx) {
+		for _, check := range ui.pluginChecks {
+			check.Value = true
+		}
+	}
+	if ui.clearButton.Clicked(gtx) {
+		for _, check := range ui.pluginChecks {
+			check.Value = false
+		}
+	}
+	if ui.installButton.Clicked(gtx) {
+		ui.startInstall()
+	}
+}
+
+func (ui *installerUI) header(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					label := material.H3(ui.th, "Kratomix")
+					label.Color = color.NRGBA{R: 246, G: 226, B: 192, A: 255}
+					label.Font.Typeface = font.Typeface("Snell Roundhand, Apple Chancery, cursive")
+					label.Font.Style = font.Italic
+					label.Font.Weight = font.Bold
+					return label.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					label := material.Body1(ui.th, "Installer")
+					label.Color = accentColor
+					label.Font.Weight = font.Bold
+					return label.Layout(gtx)
+				}),
+			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			label := material.Body1(ui.th, "Logic Pro only for now")
+			label.Color = accentColor
+			label.Font.Weight = font.Bold
+			label.Alignment = text.End
+			return label.Layout(gtx)
+		}),
+	)
+}
+
+func (ui *installerUI) tabs(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Rigid(ui.tabButton(&ui.installTab, "Install", ui.activeTab == "install")),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Rigid(ui.tabButton(&ui.settingsTab, "Settings", ui.activeTab == "settings")),
+	)
+}
+
+func (ui *installerUI) tabButton(button *widget.Clickable, label string, active bool) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		style := material.Button(ui.th, button, label)
+		style.CornerRadius = unit.Dp(7)
+		if active {
+			style.Background = accentColor
+			style.Color = color.NRGBA{R: 18, G: 14, B: 11, A: 255}
+		} else {
+			style.Background = cardColor
+			style.Color = textColor
+		}
+		return style.Layout(gtx)
+	}
+}
+
+func (ui *installerUI) body(gtx layout.Context) layout.Dimensions {
+	return ui.panel(gtx, func(gtx layout.Context) layout.Dimensions {
+		if ui.activeTab == "settings" {
+			return ui.settings(gtx)
+		}
+		return ui.install(gtx)
+	})
+}
+
+func (ui *installerUI) install(gtx layout.Context) layout.Dimensions {
+	return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(ui.controls),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+			layout.Flexed(1, ui.plugins),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+			layout.Rigid(ui.footer),
+		)
+	})
+}
+
+func (ui *installerUI) controls(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			label := material.Body1(ui.th, "Formats")
+			label.Color = mutedColor
+			label.Font.Weight = font.Bold
+			return label.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
+		layout.Rigid(material.CheckBox(ui.th, &ui.auCheck, "AU").Layout),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Rigid(material.CheckBox(ui.th, &ui.vst3Check, "VST3").Layout),
+		layout.Flexed(1, layout.Spacer{}.Layout),
+		layout.Rigid(ui.smallButton(&ui.selectAllButton, "Select All")),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Rigid(ui.smallButton(&ui.clearButton, "Clear")),
+	)
+}
+
+func (ui *installerUI) plugins(gtx layout.Context) layout.Dimensions {
+	ui.mu.Lock()
+	plugins := append([]plugin(nil), ui.current.Plugins...)
+	loaded := ui.manifestLoaded
+	ui.mu.Unlock()
+
+	if !loaded {
+		return ui.emptyState(gtx, "Loading plugins...")
+	}
+	if len(plugins) == 0 {
+		return ui.emptyState(gtx, "No plugins in manifest.")
+	}
+
+	return ui.pluginList.Layout(gtx, len(plugins), func(gtx layout.Context, index int) layout.Dimensions {
+		p := plugins[index]
+		check := ui.checkboxFor(p)
+		return layout.Inset{Bottom: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.card(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(material.CheckBox(ui.th, check, p.Name).Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								label := material.Body1(ui.th, fmt.Sprintf("Version %s", p.Version))
+								label.Color = mutedColor
+								label.TextSize = unit.Sp(13)
+								return label.Layout(gtx)
+							}),
+						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						label := material.Body1(ui.th, availableFormatText(p))
+						label.Color = accentColor
+						label.Font.Weight = font.Bold
+						return label.Layout(gtx)
+					}),
+				)
+			})
+		})
+	})
+}
+
+func (ui *installerUI) footer(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, ui.mainHint),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			style := material.Button(ui.th, &ui.installButton, "Install Selected")
+			style.CornerRadius = unit.Dp(8)
+			style.Background = accentColor
+			style.Color = color.NRGBA{R: 18, G: 14, B: 11, A: 255}
+			return style.Layout(gtx)
+		}),
+	)
+}
+
+func (ui *installerUI) mainHint(gtx layout.Context) layout.Dimensions {
+	ui.mu.Lock()
+	status := ui.status
+	scope := ui.scopeChoice.Value
+	ui.mu.Unlock()
+	if status == "" || strings.Contains(status, "loaded") || status == "Ready to install" {
+		status = installLocationText(scope)
+	}
+	label := material.Body1(ui.th, status)
+	label.Color = mutedColor
+	label.TextSize = unit.Sp(13)
+	return label.Layout(gtx)
+}
+
+func (ui *installerUI) logPanel(gtx layout.Context) layout.Dimensions {
+	ui.mu.Lock()
+	logs := append([]string(nil), ui.logLines...)
+	ui.mu.Unlock()
+	if len(logs) == 0 {
+		logs = []string{"Ready."}
+	}
+	if len(logs) > 4 {
+		logs = logs[len(logs)-4:]
+	}
+	return ui.card(gtx, func(gtx layout.Context) layout.Dimensions {
+		return ui.logList.Layout(gtx, len(logs), func(gtx layout.Context, index int) layout.Dimensions {
+			label := material.Body1(ui.th, logs[index])
+			label.Color = mutedColor
+			label.TextSize = unit.Sp(12)
+			return label.Layout(gtx)
+		})
+	})
+}
+
+func (ui *installerUI) settings(gtx layout.Context) layout.Dimensions {
+	return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				label := material.H6(ui.th, "Install Location")
+				label.Color = textColor
+				return label.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(material.RadioButton(ui.th, &ui.scopeChoice, "system", "System-wide").Layout),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+					layout.Rigid(material.RadioButton(ui.th, &ui.scopeChoice, "user", "User only").Layout),
+				)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				label := material.Body1(ui.th, installLocationText(ui.scopeChoice.Value))
+				label.Color = mutedColor
+				label.TextSize = unit.Sp(13)
+				return label.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				label := material.H6(ui.th, "Release Manifest")
+				label.Color = textColor
+				return label.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.card(gtx, func(gtx layout.Context) layout.Dimensions {
+					return material.Editor(ui.th, &ui.manifestEditor, defaultManifestURL).Layout(gtx)
+				})
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+			layout.Rigid(ui.smallButton(&ui.refreshButton, "Reload Manifest")),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				ui.mu.Lock()
+				source := ui.manifestSource
+				ui.mu.Unlock()
+				text := "The installer loads GitHub first and falls back to the bundled manifest when offline."
+				if source != "" {
+					text += "\nCurrent source: " + source
+				}
+				label := material.Body1(ui.th, text)
+				label.Color = mutedColor
+				return label.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+			layout.Flexed(1, ui.logPanel),
+		)
+	})
+}
+
+func (ui *installerUI) checkboxFor(p plugin) *widget.Bool {
+	check, ok := ui.pluginChecks[p.Slug]
+	if !ok {
+		check = &widget.Bool{Value: true}
+		ui.pluginChecks[p.Slug] = check
+	}
+	return check
+}
+
+func (ui *installerUI) smallButton(button *widget.Clickable, text string) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		style := material.Button(ui.th, button, text)
+		style.CornerRadius = unit.Dp(7)
+		style.Background = cardColor
+		style.Color = textColor
+		style.Inset = layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}
+		return style.Layout(gtx)
+	}
+}
+
+func (ui *installerUI) panel(gtx layout.Context, child layout.Widget) layout.Dimensions {
+	return roundedBackground(gtx, panelColor, unit.Dp(10), func(gtx layout.Context) layout.Dimensions {
+		return child(gtx)
+	})
+}
+
+func (ui *installerUI) card(gtx layout.Context, child layout.Widget) layout.Dimensions {
+	return roundedBackground(gtx, cardColor, unit.Dp(8), func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(14)).Layout(gtx, child)
+	})
+}
+
+func (ui *installerUI) emptyState(gtx layout.Context, message string) layout.Dimensions {
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		label := material.Body1(ui.th, message)
+		label.Color = mutedColor
+		return label.Layout(gtx)
+	})
+}
+
+func roundedBackground(gtx layout.Context, bg color.NRGBA, radius unit.Dp, child layout.Widget) layout.Dimensions {
+	return layout.Background{}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			defer clip.UniformRRect(image.Rectangle{Max: gtx.Constraints.Min}, gtx.Dp(radius)).Push(gtx.Ops).Pop()
+			paint.Fill(gtx.Ops, bg)
+			return layout.Dimensions{Size: gtx.Constraints.Min}
+		},
+		child,
+	)
+}
+
+func (ui *installerUI) setStatus(status string) {
+	ui.mu.Lock()
+	ui.status = status
+	ui.mu.Unlock()
+	ui.win.Invalidate()
+}
+
+func (ui *installerUI) logf(format string, args ...any) {
+	line := fmt.Sprintf(format, args...)
+	ui.mu.Lock()
+	ui.logLines = append(ui.logLines, line)
+	ui.mu.Unlock()
+	ui.win.Invalidate()
+}
+
+func (ui *installerUI) startManifestLoad(source string, fallback bool) {
+	if strings.TrimSpace(source) == "" {
+		source = defaultManifestURL
+	}
+	ui.setStatus("Loading release manifest...")
+	go func() {
+		m, loadedFrom, err := loadManifestWithFallback(source, fallback)
+		ui.mu.Lock()
+		defer ui.mu.Unlock()
+		if err != nil {
+			ui.status = "No release manifest loaded"
+			ui.logLines = append(ui.logLines, "Manifest load failed: "+err.Error())
+		} else {
+			ui.current = m
+			ui.manifestSource = loadedFrom
+			ui.manifestLoaded = true
+			ui.status = "Ready to install"
+			ui.logLines = append(ui.logLines, fmt.Sprintf("Loaded %d plugins from %s", len(m.Plugins), loadedFrom))
+		}
+		ui.win.Invalidate()
+	}()
+}
+
+func (ui *installerUI) startInstall() {
+	ui.mu.Lock()
+	if ui.installing {
+		ui.mu.Unlock()
+		return
+	}
+	selected := make([]plugin, 0)
+	for _, p := range ui.current.Plugins {
+		if check := ui.pluginChecks[p.Slug]; check != nil && check.Value {
+			selected = append(selected, p)
+		}
+	}
+	formats := selectedFormats(ui.auCheck.Value, ui.vst3Check.Value)
+	scope := normalizedScope(ui.scopeChoice.Value)
+	ui.installing = true
+	ui.status = "Installing..."
+	ui.mu.Unlock()
+
+	if len(selected) == 0 {
+		ui.setInstallFinished("Select at least one plugin.")
+		return
+	}
+	if len(formats) == 0 {
+		ui.setInstallFinished("Select at least one format.")
+		return
+	}
+
+	go func() {
+		tempDir, err := os.MkdirTemp("", "kratomix-installer-*")
+		if err != nil {
+			ui.setInstallFinished(err.Error())
+			return
+		}
+		defer os.RemoveAll(tempDir)
+
+		jobs := make([]installJob, 0, len(selected)*len(formats))
+		for _, p := range selected {
+			ui.logf("Preparing %s", p.Name)
+			pluginJobs, err := preparePluginInstall(tempDir, p, formats, scope, ui.logf)
+			if err != nil {
+				ui.setInstallFinished("Install failed: " + err.Error())
+				return
+			}
+			jobs = append(jobs, pluginJobs...)
+		}
+		if err := installJobs(jobs, scope, ui.logf); err != nil {
+			ui.setInstallFinished("Install failed: " + err.Error())
+			return
+		}
+		ui.setInstallFinished("Install complete. Restart your DAW.")
+	}()
+}
+
+func (ui *installerUI) setInstallFinished(status string) {
+	ui.mu.Lock()
+	ui.status = status
+	ui.logLines = append(ui.logLines, status)
+	ui.installing = false
+	ui.mu.Unlock()
+	ui.win.Invalidate()
 }
 
 func runHeadless(options cliOptions) error {
@@ -93,6 +633,7 @@ func runHeadless(options cliOptions) error {
 	if len(formats) == 0 {
 		return errors.New("select at least one format")
 	}
+	scope := normalizedScope(options.scope)
 
 	tempDir, err := os.MkdirTemp("", "kratomix-installer-*")
 	if err != nil {
@@ -104,10 +645,16 @@ func runHeadless(options cliOptions) error {
 		fmt.Printf(format+"\n", args...)
 	}
 
+	jobs := make([]installJob, 0, len(selected)*len(formats))
 	for _, p := range selected {
-		if err := installPlugin(tempDir, p, formats, logf); err != nil {
+		pluginJobs, err := preparePluginInstall(tempDir, p, formats, scope, logf)
+		if err != nil {
 			return err
 		}
+		jobs = append(jobs, pluginJobs...)
+	}
+	if err := installJobs(jobs, scope, logf); err != nil {
+		return err
 	}
 
 	fmt.Println("Install complete. Restart your DAW and rescan plugins if needed.")
@@ -153,192 +700,6 @@ func parseCSV(value string) []string {
 		}
 	}
 	return result
-}
-
-func main() {
-	options := parseCLIOptions()
-	if options.headless {
-		if err := runHeadless(options); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	a := app.NewWithID("com.kratomix.installer")
-	a.Settings().SetTheme(kratomixTheme{})
-	w := a.NewWindow("Kratomix Installer")
-	w.Resize(fyne.NewSize(820, 560))
-	if icon := loadIconResource(); icon != nil {
-		w.SetIcon(icon)
-	}
-
-	manifestEntry := widget.NewEntry()
-	manifestEntry.SetText(options.manifest)
-
-	pluginRows := container.NewVBox()
-	logText := widget.NewMultiLineEntry()
-	logText.Disable()
-	statusLabel := widget.NewLabel("Loading release manifest...")
-
-	auCheck := widget.NewCheck("AU", nil)
-	auCheck.SetChecked(true)
-	vst3Check := widget.NewCheck("VST3", nil)
-	vst3Check.SetChecked(true)
-
-	var rows []pluginRow
-	var current manifest
-
-	logf := func(format string, args ...any) {
-		line := fmt.Sprintf(format, args...)
-		logText.SetText(strings.TrimSpace(logText.Text + "\n" + line))
-		logText.CursorRow = len(strings.Split(logText.Text, "\n"))
-	}
-
-	applyManifest := func(m manifest, source string) {
-		current = m
-		rows = rows[:0]
-		pluginRows.RemoveAll()
-
-		for _, p := range current.Plugins {
-			p := p
-			label := fmt.Sprintf("%s  %s", p.Name, p.Version)
-			check := widget.NewCheck(label, nil)
-			check.SetChecked(true)
-			rows = append(rows, pluginRow{plugin: p, check: check})
-			formatText := availableFormatText(p)
-			pluginRows.Add(container.NewBorder(nil, nil, check, widget.NewLabel(formatText)))
-		}
-
-		pluginRows.Refresh()
-		statusLabel.SetText(fmt.Sprintf("%s %s loaded", current.Brand, current.Version))
-		logf("Loaded %d plugins from %s", len(current.Plugins), source)
-	}
-
-	loadFromSource := func(source string, useFallback bool) {
-		logf("Loading manifest: %s", source)
-		m, loadedFrom, err := loadManifestWithFallback(source, useFallback)
-		if err != nil {
-			dialog.ShowError(err, w)
-			statusLabel.SetText("No release manifest loaded")
-			logf("Manifest load failed: %v", err)
-			return
-		}
-
-		applyManifest(m, loadedFrom)
-	}
-
-	loadButton := widget.NewButton("Load", func() {
-		url := strings.TrimSpace(manifestEntry.Text)
-		if url == "" {
-			dialog.ShowError(errors.New("manifest URL is required"), w)
-			return
-		}
-
-		loadFromSource(url, true)
-	})
-
-	selectAllButton := widget.NewButton("Select All", func() {
-		for _, row := range rows {
-			row.check.SetChecked(true)
-		}
-	})
-
-	clearButton := widget.NewButton("Clear", func() {
-		for _, row := range rows {
-			row.check.SetChecked(false)
-		}
-	})
-
-	var installButton *widget.Button
-	installButton = widget.NewButton("Install Selected", func() {
-		if len(rows) == 0 {
-			dialog.ShowError(errors.New("load a manifest before installing"), w)
-			return
-		}
-
-		formats := selectedFormats(auCheck.Checked, vst3Check.Checked)
-		if len(formats) == 0 {
-			dialog.ShowError(errors.New("select at least one format"), w)
-			return
-		}
-
-		selected := make([]plugin, 0)
-		for _, row := range rows {
-			if row.check.Checked {
-				selected = append(selected, row.plugin)
-			}
-		}
-		if len(selected) == 0 {
-			dialog.ShowError(errors.New("select at least one plugin"), w)
-			return
-		}
-
-		installButton.Disable()
-		defer installButton.Enable()
-
-		tempDir, err := os.MkdirTemp("", "kratomix-installer-*")
-		if err != nil {
-			dialog.ShowError(err, w)
-			return
-		}
-		defer os.RemoveAll(tempDir)
-
-		for _, p := range selected {
-			logf("Installing %s", p.Name)
-			if err := installPlugin(tempDir, p, formats, logf); err != nil {
-				dialog.ShowError(err, w)
-				logf("Install failed: %v", err)
-				return
-			}
-		}
-
-		logf("Install complete. Restart your DAW and rescan plugins if needed.")
-		dialog.ShowInformation("Kratomix Installer", "Install complete. Restart your DAW and rescan plugins if needed.", w)
-	})
-
-	title := canvas.NewText("Kratomix", color.NRGBA{R: 246, G: 226, B: 192, A: 255})
-	title.TextStyle = fyne.TextStyle{Bold: true, Italic: true}
-	title.TextSize = 34
-	subtitle := canvas.NewText("Installer", color.NRGBA{R: 241, G: 194, B: 124, A: 255})
-	subtitle.TextStyle = fyne.TextStyle{Bold: true}
-	subtitle.TextSize = 18
-
-	formatBox := container.NewHBox(widget.NewLabel("Formats"), auCheck, vst3Check)
-	selectionBox := container.NewHBox(selectAllButton, clearButton)
-	installTab := container.NewBorder(
-		container.NewVBox(container.NewHBox(title, subtitle), statusLabel, formatBox, selectionBox),
-		container.NewVBox(logText, installButton),
-		nil,
-		nil,
-		container.NewVScroll(pluginRows),
-	)
-
-	settingsTab := container.NewBorder(
-		container.NewVBox(widget.NewLabel("Release Manifest"), container.NewBorder(nil, nil, nil, loadButton, manifestEntry)),
-		nil,
-		nil,
-		nil,
-		widget.NewLabel("The installer loads GitHub releases by default and falls back to the bundled manifest when offline."),
-	)
-
-	tabs := container.NewAppTabs(
-		container.NewTabItem("Install", installTab),
-		container.NewTabItem("Settings", settingsTab),
-	)
-	w.SetContent(tabs)
-	go func() {
-		m, source, err := loadManifestWithFallback(options.manifest, true)
-		fyne.Do(func() {
-			if err != nil {
-				statusLabel.SetText("No release manifest loaded")
-				logf("Manifest load failed: %v", err)
-				return
-			}
-			applyManifest(m, source)
-		})
-	}()
-	w.ShowAndRun()
 }
 
 func selectedFormats(au bool, vst3 bool) []string {
@@ -445,9 +806,25 @@ func localManifestCandidates() []string {
 	return unique
 }
 
-func installPlugin(tempDir string, p plugin, formats []string, logf func(string, ...any)) error {
+func normalizedScope(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "user":
+		return "user"
+	default:
+		return "system"
+	}
+}
+
+func installLocationText(scope string) string {
+	if normalizedScope(scope) == "user" {
+		return "Installs to ~/Library/Audio/Plug-Ins. No administrator password is needed."
+	}
+	return "Installs system-wide to /Library/Audio/Plug-Ins. macOS asks once for administrator access."
+}
+
+func preparePluginInstall(tempDir string, p plugin, formats []string, scope string, logf func(string, ...any)) ([]installJob, error) {
 	if p.URL == "" {
-		return fmt.Errorf("%s has no download URL", p.Name)
+		return nil, fmt.Errorf("%s has no download URL", p.Name)
 	}
 
 	zipPath := filepath.Join(tempDir, p.Asset)
@@ -455,25 +832,47 @@ func installPlugin(tempDir string, p plugin, formats []string, logf func(string,
 
 	logf("Downloading %s", p.URL)
 	if err := downloadPluginAsset(zipPath, p); err != nil {
-		return err
+		return nil, err
 	}
 
 	logf("Extracting %s", p.Asset)
 	if err := unzip(zipPath, extractDir); err != nil {
-		return err
+		return nil, err
 	}
 
+	jobs := make([]installJob, 0, len(formats))
 	for _, format := range formats {
 		if !p.Formats[format] {
 			logf("Skipping %s for %s; format is not available", strings.ToUpper(format), p.Name)
 			continue
 		}
-		if err := installFormat(extractDir, p.Name, format, logf); err != nil {
-			return err
+		job, err := makeInstallJob(extractDir, p.Name, format, scope)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+
+	return jobs, nil
+}
+
+func downloadPluginAsset(path string, p plugin) error {
+	if p.URL != "" {
+		if err := downloadFile(path, p.URL); err == nil {
+			return nil
 		}
 	}
 
-	return nil
+	for _, candidate := range localAssetCandidates(p.Asset) {
+		if err := copyFile(path, candidate); err == nil {
+			return nil
+		}
+	}
+
+	if p.URL == "" {
+		return fmt.Errorf("%s has no download URL and no local asset named %s", p.Name, p.Asset)
+	}
+	return fmt.Errorf("could not download %s or find local asset %s", p.URL, p.Asset)
 }
 
 func downloadFile(path string, url string) error {
@@ -494,25 +893,6 @@ func downloadFile(path string, url string) error {
 
 	_, err = io.Copy(out, resp.Body)
 	return err
-}
-
-func downloadPluginAsset(path string, p plugin) error {
-	if p.URL != "" {
-		if err := downloadFile(path, p.URL); err == nil {
-			return nil
-		}
-	}
-
-	for _, candidate := range localAssetCandidates(p.Asset) {
-		if err := copyFile(path, candidate); err == nil {
-			return nil
-		}
-	}
-
-	if p.URL == "" {
-		return fmt.Errorf("%s has no download URL and no local asset named %s", p.Name, p.Asset)
-	}
-	return fmt.Errorf("could not download %s or find local asset %s", p.URL, p.Asset)
 }
 
 func localAssetCandidates(asset string) []string {
@@ -604,35 +984,98 @@ func unzip(zipPath string, destination string) error {
 	return nil
 }
 
-func installFormat(extractDir string, productName string, format string, logf func(string, ...any)) error {
+func makeInstallJob(extractDir string, productName string, format string, scope string) (installJob, error) {
 	var source string
 	var target string
 
 	switch format {
 	case "au":
 		source = filepath.Join(extractDir, "AU", productName+".component")
-		target = filepath.Join("/Library/Audio/Plug-Ins/Components", productName+".component")
 	case "vst3":
 		source = filepath.Join(extractDir, "VST3", productName+".vst3")
-		target = filepath.Join("/Library/Audio/Plug-Ins/VST3", productName+".vst3")
 	default:
-		return fmt.Errorf("unsupported format: %s", format)
+		return installJob{}, fmt.Errorf("unsupported format: %s", format)
 	}
+
+	base, err := installBasePath(format, scope)
+	if err != nil {
+		return installJob{}, err
+	}
+	target = filepath.Join(base, filepath.Base(source))
 
 	if _, err := os.Stat(source); err != nil {
-		return fmt.Errorf("missing %s bundle: %w", strings.ToUpper(format), err)
+		return installJob{}, fmt.Errorf("missing %s bundle: %w", strings.ToUpper(format), err)
 	}
 
-	logf("Installing %s to %s", source, target)
-	command := fmt.Sprintf(
-		"mkdir -p %s && ditto %s %s && (xattr -dr com.apple.quarantine %s >/dev/null 2>&1 || true)",
-		shellQuote(filepath.Dir(target)),
-		shellQuote(source),
-		shellQuote(target),
-		shellQuote(target),
-	)
+	return installJob{source: source, target: target, format: format, name: productName}, nil
+}
 
-	return runPrivileged(command)
+func installBasePath(format string, scope string) (string, error) {
+	var root string
+	if normalizedScope(scope) == "user" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		root = filepath.Join(home, "Library", "Audio", "Plug-Ins")
+	} else {
+		root = filepath.Join(string(os.PathSeparator), "Library", "Audio", "Plug-Ins")
+	}
+
+	switch format {
+	case "au":
+		return filepath.Join(root, "Components"), nil
+	case "vst3":
+		return filepath.Join(root, "VST3"), nil
+	default:
+		return "", fmt.Errorf("unsupported format: %s", format)
+	}
+}
+
+func installJobs(jobs []installJob, scope string, logf func(string, ...any)) error {
+	if len(jobs) == 0 {
+		return errors.New("no installable formats selected")
+	}
+	if normalizedScope(scope) == "user" {
+		for _, job := range jobs {
+			logf("Installing %s to %s", job.source, job.target)
+			if err := os.MkdirAll(filepath.Dir(job.target), 0o755); err != nil {
+				return err
+			}
+			if err := runCommand("ditto", job.source, job.target); err != nil {
+				return err
+			}
+			_ = runCommand("xattr", "-dr", "com.apple.quarantine", job.target)
+		}
+		return nil
+	}
+
+	var builder strings.Builder
+	builder.WriteString("set -e\n")
+	for _, job := range jobs {
+		logf("Installing %s to %s", job.source, job.target)
+		builder.WriteString("mkdir -p ")
+		builder.WriteString(shellQuote(filepath.Dir(job.target)))
+		builder.WriteString("\n")
+		builder.WriteString("ditto ")
+		builder.WriteString(shellQuote(job.source))
+		builder.WriteString(" ")
+		builder.WriteString(shellQuote(job.target))
+		builder.WriteString("\n")
+		builder.WriteString("xattr -dr com.apple.quarantine ")
+		builder.WriteString(shellQuote(job.target))
+		builder.WriteString(" >/dev/null 2>&1 || true\n")
+	}
+
+	return runPrivileged(builder.String())
+}
+
+func runCommand(name string, args ...string) error {
+	output, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s failed: %w\n%s", name, err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func runPrivileged(command string) error {
@@ -646,73 +1089,4 @@ func runPrivileged(command string) error {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
-func loadIconResource() fyne.Resource {
-	for _, candidate := range iconCandidates() {
-		resource, err := fyne.LoadResourceFromPath(candidate)
-		if err == nil {
-			return resource
-		}
-	}
-	return nil
-}
-
-func iconCandidates() []string {
-	candidates := []string{
-		filepath.Join("assets", "icon.svg"),
-		filepath.Join("tools", "kratomix-installer", "assets", "icon.svg"),
-	}
-
-	if executable, err := os.Executable(); err == nil {
-		resourcesIcon := filepath.Clean(filepath.Join(filepath.Dir(executable), "..", "Resources", "icon.svg"))
-		candidates = append([]string{resourcesIcon}, candidates...)
-	}
-
-	return candidates
-}
-
-type kratomixTheme struct{}
-
-func (kratomixTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
-	switch name {
-	case theme.ColorNameBackground:
-		return color.NRGBA{R: 8, G: 9, B: 11, A: 255}
-	case theme.ColorNameButton:
-		return color.NRGBA{R: 37, G: 29, B: 23, A: 255}
-	case theme.ColorNameDisabledButton:
-		return color.NRGBA{R: 26, G: 24, B: 23, A: 255}
-	case theme.ColorNameForeground:
-		return color.NRGBA{R: 250, G: 231, B: 202, A: 255}
-	case theme.ColorNameDisabled:
-		return color.NRGBA{R: 126, G: 114, B: 96, A: 255}
-	case theme.ColorNameForegroundOnPrimary:
-		return color.NRGBA{R: 18, G: 14, B: 11, A: 255}
-	case theme.ColorNameInputBackground:
-		return color.NRGBA{R: 18, G: 19, B: 22, A: 255}
-	case theme.ColorNameInputBorder:
-		return color.NRGBA{R: 74, G: 52, B: 36, A: 255}
-	case theme.ColorNamePrimary:
-		return color.NRGBA{R: 241, G: 194, B: 124, A: 255}
-	case theme.ColorNameSelection:
-		return color.NRGBA{R: 72, G: 54, B: 38, A: 255}
-	case theme.ColorNameSeparator:
-		return color.NRGBA{R: 42, G: 36, B: 28, A: 255}
-	case theme.ColorNameShadow:
-		return color.NRGBA{R: 0, G: 0, B: 0, A: 150}
-	default:
-		return theme.DarkTheme().Color(name, variant)
-	}
-}
-
-func (kratomixTheme) Font(style fyne.TextStyle) fyne.Resource {
-	return theme.DarkTheme().Font(style)
-}
-
-func (kratomixTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
-	return theme.DarkTheme().Icon(name)
-}
-
-func (kratomixTheme) Size(name fyne.ThemeSizeName) float32 {
-	return theme.DarkTheme().Size(name)
 }
