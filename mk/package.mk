@@ -32,6 +32,13 @@ if ! command -v go >/dev/null 2>&1; then \
 fi
 endef
 
+define require_codesign
+if ! command -v codesign >/dev/null 2>&1; then \
+	echo "Target '$@' requires macOS codesign." >&2; \
+	exit 2; \
+fi
+endef
+
 package:
 	@$(call require_release_version)
 	@$(call require_ditto)
@@ -104,6 +111,7 @@ installer:
 	@$(call require_release_version)
 	@$(call require_go)
 	@$(call require_ditto)
+	@$(call require_codesign)
 	@rm -rf '$(INSTALLER_BUILD_DIR)' '$(INSTALLER_ASSET)'
 	@mkdir -p '$(INSTALLER_BUILD_DIR)/Contents/MacOS' '$(INSTALLER_BUILD_DIR)/Contents/Resources' '$(ABS_DIST_DIR)'
 	@cd '$(INSTALLER_DIR)' && go build -o '$(INSTALLER_BUILD_DIR)/Contents/MacOS/Kratomix Installer' .
@@ -139,6 +147,7 @@ installer:
 	@if [ -f '$(INSTALLER_DIR)/assets/AppIcon.icns' ]; then \
 		COPYFILE_DISABLE=1 ditto --norsrc '$(INSTALLER_DIR)/assets/AppIcon.icns' '$(INSTALLER_BUILD_DIR)/Contents/Resources/AppIcon.icns'; \
 	fi
+	@codesign --force --deep --sign - '$(INSTALLER_BUILD_DIR)'
 	@cd '$(ABS_DIST_DIR)' && COPYFILE_DISABLE=1 ditto -c -k --norsrc --keepParent "Kratomix Installer.app" '$(INSTALLER_ASSET)'
 	@echo "Created $(INSTALLER_ASSET)"
 
@@ -161,9 +170,10 @@ release-docs:
 		'2. Unzip it. The archive contains `Kratomix Installer.app` directly.' \
 		'3. Open `Kratomix Installer.app`.' \
 		'4. Keep the default manifest URL unless you need a local/offline manifest.' \
-		'5. Select the plugins and formats you want to install.' \
-		'6. Choose the install location in Settings: `System-wide` or `User only`.' \
-		'7. Click `Install Selected`, then restart Logic Pro.' \
+		'5. Optional: choose the release channel in Settings: `Stable` or `Unstable`.' \
+		'6. Select the plugins and formats you want to install.' \
+		'7. Choose the install location in Settings: `System-wide` or `User only`.' \
+		'8. Click `Install Selected`, then restart Logic Pro.' \
 		'' \
 		'For now, Kratomix targets Logic Pro first. The installer can place AU and VST3 bundles, but Logic Pro uses AU.' \
 		'' \
@@ -192,8 +202,9 @@ release-docs:
 		'' \
 		'1. Download `Kratomix-Installer-$(VERSION)-macos.zip`.' \
 		'2. Unzip it and open `Kratomix Installer.app`.' \
-		'3. Select the plugins and formats you want.' \
-		'4. Click `Install Selected`, then restart Logic Pro.' \
+		'3. Optional: choose `Stable` or `Unstable` in Settings.' \
+		'4. Select the plugins and formats you want.' \
+		'5. Click `Install Selected`, then restart Logic Pro.' \
 		'' \
 		'For detailed steps, download `INSTALL.md` from this release.' \
 		'' \

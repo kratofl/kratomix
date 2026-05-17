@@ -6,6 +6,34 @@ import (
 	"testing"
 )
 
+func TestNormalizeChannel(t *testing.T) {
+	if got := normalizedChannel("unstable"); got != "prerelease" {
+		t.Fatalf("normalizedChannel(unstable) = %q, want prerelease", got)
+	}
+	if got := normalizedChannel("stable"); got != "stable" {
+		t.Fatalf("normalizedChannel(stable) = %q, want stable", got)
+	}
+	if got := normalizedChannel("unknown"); got != "stable" {
+		t.Fatalf("normalizedChannel(unknown) = %q, want stable", got)
+	}
+}
+
+func TestFindPrereleaseManifestURL(t *testing.T) {
+	releases := []githubRelease{
+		{Prerelease: false, Assets: []githubAsset{{Name: "manifest.json", BrowserDownloadURL: "stable"}}},
+		{Prerelease: true, Assets: []githubAsset{{Name: "notes.txt", BrowserDownloadURL: "ignored"}}},
+		{Prerelease: true, Assets: []githubAsset{{Name: "manifest.json", BrowserDownloadURL: "unstable"}}},
+	}
+
+	got, ok := findPrereleaseManifestURL(releases)
+	if !ok {
+		t.Fatal("expected prerelease manifest URL")
+	}
+	if got != "unstable" {
+		t.Fatalf("manifest URL = %q, want unstable", got)
+	}
+}
+
 func TestReadBundleVersionFromInfoPlist(t *testing.T) {
 	bundle := filepath.Join(t.TempDir(), "Kratomix Test.component")
 	contents := filepath.Join(bundle, "Contents")

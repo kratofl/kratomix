@@ -31,7 +31,10 @@ import (
 	"gioui.org/widget/material"
 )
 
-const defaultManifestURL = "https://github.com/kratofl/kratomix/releases/latest/download/manifest.json"
+const (
+	defaultManifestURL = "https://github.com/kratofl/kratomix/releases/latest/download/manifest.json"
+	githubReleasesURL  = "https://api.github.com/repos/kratofl/kratomix/releases?per_page=20"
+)
 
 var httpClient = &http.Client{Timeout: 12 * time.Second}
 
@@ -69,6 +72,7 @@ type cliOptions struct {
 	plugins  string
 	formats  string
 	scope    string
+	channel  string
 }
 
 type installJob struct {
@@ -81,6 +85,16 @@ type installJob struct {
 type pluginInstallState struct {
 	AUVersion   string
 	VST3Version string
+}
+
+type githubRelease struct {
+	Prerelease bool          `json:"prerelease"`
+	Assets     []githubAsset `json:"assets"`
+}
+
+type githubAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
 type installerUI struct {
@@ -99,6 +113,7 @@ type installerUI struct {
 	manifestEditor widget.Editor
 	pluginChecks   map[string]*widget.Bool
 	scopeChoice    widget.Enum
+	channelChoice  widget.Enum
 	auCheck        widget.Bool
 	vst3Check      widget.Bool
 	pluginList     layout.List
@@ -114,13 +129,14 @@ type installerUI struct {
 }
 
 func parseCLIOptions() cliOptions {
-	options := cliOptions{manifest: defaultManifestURL, plugins: "all", formats: "au,vst3", scope: "system"}
+	options := cliOptions{manifest: defaultManifestURL, plugins: "all", formats: "au,vst3", scope: "system", channel: "stable"}
 	flag.BoolVar(&options.headless, "headless", false, "run without the GUI")
 	flag.BoolVar(&options.list, "list", false, "list available plugins and exit")
 	flag.StringVar(&options.manifest, "manifest", defaultManifestURL, "release manifest URL or local path")
 	flag.StringVar(&options.plugins, "plugins", "all", "comma-separated plugin slugs or all")
 	flag.StringVar(&options.formats, "formats", "au,vst3", "comma-separated formats: au,vst3")
 	flag.StringVar(&options.scope, "scope", "system", "installation scope: system or user")
+	flag.StringVar(&options.channel, "channel", "stable", "release channel: stable or prerelease")
 	flag.Parse()
 	return options
 }
@@ -183,6 +199,7 @@ func newInstallerUI(win *app.Window, options cliOptions) *installerUI {
 	ui.auCheck.Value = true
 	ui.vst3Check.Value = true
 	ui.scopeChoice.Value = normalizedScope(options.scope)
+	ui.channelChoice.Value = normalizedChannel(options.channel)
 	return ui
 }
 
@@ -414,6 +431,27 @@ func (ui *installerUI) settings(gtx layout.Context) layout.Dimensions {
 	return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				label := material.H6(ui.th, "Release Channel")
+				label.Color = textColor
+				return label.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(material.RadioButton(ui.th, &ui.channelChoice, "stable", "Stable").Layout),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+					layout.Rigid(material.RadioButton(ui.th, &ui.channelChoice, "prerelease", "Unstable").Layout),
+				)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				label := material.Body1(ui.th, channelDescription(ui.channelChoice.Value))
+				label.Color = mutedColor
+				label.TextSize = unit.Sp(13)
+				return label.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				label := material.H6(ui.th, "Install Location")
 				label.Color = textColor
 				return label.Layout(gtx)
@@ -538,7 +576,10 @@ func (ui *installerUI) startManifestLoad(source string, fallback bool) {
 	}
 	ui.setStatus("Loading release manifest...")
 	go func() {
-		m, loadedFrom, err := loadManifestWithFallback(source, fallback)
+		ui.mu.Lock()
+		channel := ui.channelChoice.Value
+		ui.mu.Unlock()
+		m, loadedFrom, err := loadManifestForChannel(source, channel, fallback)
 		ui.mu.Lock()
 		defer ui.mu.Unlock()
 		if err != nil {
@@ -618,7 +659,7 @@ func (ui *installerUI) setInstallFinished(status string) {
 }
 
 func runHeadless(options cliOptions) error {
-	m, source, err := loadManifestWithFallback(options.manifest, true)
+	m, source, err := loadManifestForChannel(options.manifest, options.channel, true)
 	if err != nil {
 		return err
 	}
@@ -900,6 +941,58 @@ func loadManifest(source string) (manifest, error) {
 	return m, nil
 }
 
+func loadManifestForChannel(source string, channel string, useFallback bool) (manifest, string, error) {
+	if normalizedChannel(channel) == "prerelease" && strings.TrimSpace(source) == defaultManifestURL {
+		prereleaseManifest, err := latestPrereleaseManifestURL()
+		if err == nil {
+			return loadManifestWithFallback(prereleaseManifest, useFallback)
+		}
+		if !useFallback {
+			return manifest{}, "", err
+		}
+		m, loadedFrom, fallbackErr := loadManifestWithFallback(source, useFallback)
+		if fallbackErr != nil {
+			return manifest{}, "", fmt.Errorf("could not load prerelease manifest: %v\nfallback failed: %w", err, fallbackErr)
+		}
+		return m, loadedFrom, nil
+	}
+	return loadManifestWithFallback(source, useFallback)
+}
+
+func latestPrereleaseManifestURL() (string, error) {
+	resp, err := httpClient.Get(githubReleasesURL)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("GitHub releases request failed: %s", resp.Status)
+	}
+
+	var releases []githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return "", err
+	}
+	if url, ok := findPrereleaseManifestURL(releases); ok {
+		return url, nil
+	}
+	return "", errors.New("no prerelease manifest asset found")
+}
+
+func findPrereleaseManifestURL(releases []githubRelease) (string, bool) {
+	for _, release := range releases {
+		if !release.Prerelease {
+			continue
+		}
+		for _, asset := range release.Assets {
+			if asset.Name == "manifest.json" && strings.TrimSpace(asset.BrowserDownloadURL) != "" {
+				return asset.BrowserDownloadURL, true
+			}
+		}
+	}
+	return "", false
+}
+
 func loadManifestWithFallback(primary string, useFallback bool) (manifest, string, error) {
 	m, err := loadManifest(primary)
 	if err == nil {
@@ -955,6 +1048,22 @@ func normalizedScope(scope string) string {
 	default:
 		return "system"
 	}
+}
+
+func normalizedChannel(channel string) string {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "prerelease", "pre-release", "unstable", "beta":
+		return "prerelease"
+	default:
+		return "stable"
+	}
+}
+
+func channelDescription(channel string) string {
+	if normalizedChannel(channel) == "prerelease" {
+		return "Unstable installs the newest GitHub prerelease. Use it for testing builds."
+	}
+	return "Stable installs the latest normal GitHub release."
 }
 
 func installLocationText(scope string) string {

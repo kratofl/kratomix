@@ -21,9 +21,12 @@ Each release ships a Kratomix Installer GUI plus separate plugin ZIP assets.
 2. Unzip it. The archive contains `Kratomix Installer.app` directly.
 3. Open `Kratomix Installer.app`.
 4. Keep the default manifest URL unless you need a local/offline manifest.
-5. Select the plugins and formats you want to install.
-6. Choose the install location in Settings: `System-wide` or `User only`.
-7. Click `Install Selected`, then restart Logic Pro.
+5. Optional: choose the release channel in Settings.
+   - `Stable` installs the latest normal release.
+   - `Unstable` installs the newest prerelease.
+6. Select the plugins and formats you want to install.
+7. Choose the install location in Settings: `System-wide` or `User only`.
+8. Click `Install Selected`, then restart Logic Pro.
 
 Kratomix targets Logic Pro first. The installer can place AU and VST3 bundles, but Logic Pro uses AU.
 
