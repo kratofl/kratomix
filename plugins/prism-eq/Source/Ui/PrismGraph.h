@@ -20,6 +20,7 @@ class PrismGraph final : public juce::Component,
 {
 public:
     PrismGraph();
+    ~PrismGraph() override;
 
     void attachState(juce::AudioProcessorValueTreeState& stateToUse);
     void attachAnalyzerReader(std::function<void(PrismAnalyzerFrame&)> reader);
@@ -28,6 +29,7 @@ public:
     void mouseDoubleClick(const juce::MouseEvent& event) override;
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
+    void mouseUp(const juce::MouseEvent& event) override;
     void mouseMove(const juce::MouseEvent& event) override;
     void mouseExit(const juce::MouseEvent& event) override;
     bool keyPressed(const juce::KeyPress& key) override;
@@ -76,7 +78,11 @@ private:
     static float frequencyForAnalyzerBin(int binIndex);
     static int analyzerBinForFrequency(float frequency);
 
+    void dragSelectedBandTo(juce::Point<float> point, bool keepGestureOpen);
+    void beginDragGesture();
+    void endDragGesture();
     void setParameterValue(const juce::String& id, float plainValue);
+    void setParameterValueWithoutGesture(const juce::String& id, float plainValue);
     float parameterValue(const juce::String& id, float fallback) const;
     bool bandEnabled(int oneBasedIndex) const;
     juce::Point<float> bandPoint(int oneBasedIndex) const;
@@ -92,6 +98,9 @@ private:
 
     juce::AudioProcessorValueTreeState* state = nullptr;
     int selectedBand = 0;
+    int dragGestureBand = 0;
+    juce::RangedAudioParameter* dragFrequencyParameter = nullptr;
+    juce::RangedAudioParameter* dragGainParameter = nullptr;
     std::optional<juce::Point<float>> hoverPoint;
 };
 }

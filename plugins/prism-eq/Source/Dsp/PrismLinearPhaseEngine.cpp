@@ -26,6 +26,7 @@ void PrismLinearPhaseEngine::prepare(const juce::dsp::ProcessSpec& spec)
     prepared = true;
     activeDigest = 0;
     pendingDigest = 0;
+    pendingRebuildBlocks = 0;
 }
 
 void PrismLinearPhaseEngine::reset()
@@ -36,8 +37,13 @@ void PrismLinearPhaseEngine::reset()
 
 void PrismLinearPhaseEngine::updateSettings(const PrismSettings& settings)
 {
+    const auto newDigest = makeSettingsDigest(settings);
+    if (newDigest == pendingDigest)
+        return;
+
     pendingSettings = settings;
-    pendingDigest = makeSettingsDigest(settings);
+    pendingDigest = newDigest;
+    pendingRebuildBlocks = activeDigest == 0 ? 0 : rebuildSettleBlocks;
 }
 
 void PrismLinearPhaseEngine::process(juce::AudioBuffer<float>& buffer)
@@ -76,6 +82,12 @@ void PrismLinearPhaseEngine::rebuildImpulseIfNeeded()
 {
     if (activeDigest == pendingDigest)
         return;
+
+    if (pendingRebuildBlocks > 0)
+    {
+        --pendingRebuildBlocks;
+        return;
+    }
 
     currentSettings = pendingSettings;
     buildImpulseResponse();

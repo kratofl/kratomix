@@ -2,6 +2,25 @@
 
 namespace kratomix
 {
+namespace
+{
+uint64_t mixDigest(uint64_t seed, uint64_t value) noexcept
+{
+    seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+    return seed;
+}
+
+uint64_t floatDigest(float value) noexcept
+{
+    return static_cast<uint64_t>(std::llround(static_cast<double>(value) * 1000.0));
+}
+
+uint64_t doubleDigest(double value) noexcept
+{
+    return static_cast<uint64_t>(std::llround(value * 1000.0));
+}
+}
+
 void PrismMinimumPhaseEngine::prepare(const juce::dsp::ProcessSpec& spec)
 {
     sampleRate = spec.sampleRate;
@@ -73,15 +92,16 @@ void PrismMinimumPhaseEngine::reset()
         value.store(0.0f, std::memory_order_relaxed);
     for (auto& value : analyzerDetectorUsingExternalSidechain)
         value.store(false, std::memory_order_relaxed);
+
+    activeNativeFilterDigest = 0;
+    active2xFilterDigest = 0;
+    active4xFilterDigest = 0;
+    activeDetectorDigest = 0;
 }
 
 void PrismMinimumPhaseEngine::updateSettings(const PrismSettings& newSettings)
 {
     settings = newSettings;
-    updateFilterCoefficients(sampleRate, filters, phaseFilters);
-    updateFilterCoefficients(sampleRate * 2.0, filters2x, phaseFilters2x);
-    updateFilterCoefficients(sampleRate * 4.0, filters4x, phaseFilters4x);
-    updateDetectorCoefficients();
 }
 
 void PrismMinimumPhaseEngine::process(juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>* sidechainBuffer)
@@ -92,8 +112,8 @@ void PrismMinimumPhaseEngine::process(juce::AudioBuffer<float>& buffer, const ju
         return;
     }
 
+    updateDetectorCoefficientsIfNeeded();
     updateDynamicGain(buffer, sidechainBuffer, buffer.getNumSamples());
-    updateDetectorCoefficients();
 
     auto* oversampler = settings.qualityMode == prism::QualityMode::oversample4x ? oversampler4x.get() : oversampler2x.get();
     if (oversampler == nullptr)
@@ -115,8 +135,8 @@ void PrismMinimumPhaseEngine::process(juce::AudioBuffer<float>& buffer, const ju
 
 void PrismMinimumPhaseEngine::processNativeBlock(juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>* sidechainBuffer)
 {
+    updateDetectorCoefficientsIfNeeded();
     updateDynamicGain(buffer, sidechainBuffer, buffer.getNumSamples());
-    updateDetectorCoefficients();
 
     juce::dsp::AudioBlock<float> block { buffer };
     processFilterBlock(block, filters, phaseFilters, sampleRate);
@@ -127,7 +147,10 @@ void PrismMinimumPhaseEngine::processFilterBlock(juce::dsp::AudioBlock<float>& b
                                                 std::array<StereoFilter, prism::maxBands>& targetPhaseFilters,
                                                 double processingSampleRate)
 {
-    updateFilterCoefficients(processingSampleRate, targetFilters, targetPhaseFilters);
+    auto& activeDigest = processingSampleRate > sampleRate * 3.0
+                             ? active4xFilterDigest
+                             : (processingSampleRate > sampleRate * 1.5 ? active2xFilterDigest : activeNativeFilterDigest);
+    updateFilterCoefficientsIfNeeded(processingSampleRate, targetFilters, targetPhaseFilters, activeDigest);
 
     juce::dsp::ProcessContextReplacing<float> context { block };
 
@@ -167,6 +190,20 @@ void PrismMinimumPhaseEngine::updateFilterCoefficients(double processingSampleRa
     }
 }
 
+void PrismMinimumPhaseEngine::updateFilterCoefficientsIfNeeded(
+    double processingSampleRate,
+    std::array<StereoFilter, prism::maxBands>& targetFilters,
+    std::array<StereoFilter, prism::maxBands>& targetPhaseFilters,
+    uint64_t& activeDigest)
+{
+    const auto pendingDigest = makeFilterDigest(processingSampleRate);
+    if (activeDigest == pendingDigest)
+        return;
+
+    updateFilterCoefficients(processingSampleRate, targetFilters, targetPhaseFilters);
+    activeDigest = pendingDigest;
+}
+
 void PrismMinimumPhaseEngine::updateDetectorCoefficients()
 {
     for (size_t index = 0; index < detectorFilters.size(); ++index)
@@ -174,6 +211,51 @@ void PrismMinimumPhaseEngine::updateDetectorCoefficients()
             sampleRate,
             prism::safeFilterFrequency(settings.bands[index].frequency, sampleRate),
             prism::safeFilterQ(settings.bands[index].q));
+}
+
+void PrismMinimumPhaseEngine::updateDetectorCoefficientsIfNeeded()
+{
+    const auto pendingDigest = makeDetectorDigest();
+    if (activeDetectorDigest == pendingDigest)
+        return;
+
+    updateDetectorCoefficients();
+    activeDetectorDigest = pendingDigest;
+}
+
+uint64_t PrismMinimumPhaseEngine::makeFilterDigest(double processingSampleRate) const noexcept
+{
+    auto digest = mixDigest(1469598103934665603ULL, doubleDigest(processingSampleRate));
+    digest = mixDigest(digest, static_cast<uint64_t>(settings.phaseMode));
+
+    for (size_t index = 0; index < settings.bands.size(); ++index)
+    {
+        const auto& band = settings.bands[index];
+        digest = mixDigest(digest, band.enabled ? 1U : 0U);
+        digest = mixDigest(digest, static_cast<uint64_t>(band.type));
+        digest = mixDigest(digest, floatDigest(band.frequency));
+        digest = mixDigest(digest, floatDigest(band.gainDb));
+        digest = mixDigest(digest, floatDigest(band.q));
+        digest = mixDigest(digest, band.dynamicEnabled ? 1U : 0U);
+        digest = mixDigest(digest, floatDigest(dynamicGainDb[index]));
+    }
+
+    return digest;
+}
+
+uint64_t PrismMinimumPhaseEngine::makeDetectorDigest() const noexcept
+{
+    auto digest = mixDigest(1469598103934665603ULL, doubleDigest(sampleRate));
+
+    for (const auto& band : settings.bands)
+    {
+        digest = mixDigest(digest, band.enabled ? 1U : 0U);
+        digest = mixDigest(digest, band.dynamicEnabled ? 1U : 0U);
+        digest = mixDigest(digest, floatDigest(band.frequency));
+        digest = mixDigest(digest, floatDigest(band.q));
+    }
+
+    return digest;
 }
 
 void PrismMinimumPhaseEngine::updateDynamicGain(const juce::AudioBuffer<float>& mainBuffer,

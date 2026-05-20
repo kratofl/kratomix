@@ -59,8 +59,14 @@ PrismGraph::PrismGraph()
     sidechainSpectrum.fill(-120.0f);
 }
 
+PrismGraph::~PrismGraph()
+{
+    endDragGesture();
+}
+
 void PrismGraph::attachState(juce::AudioProcessorValueTreeState& stateToUse)
 {
+    endDragGesture();
     state = &stateToUse;
     repaint();
 }
@@ -239,7 +245,12 @@ void PrismGraph::mouseDown(const juce::MouseEvent& event)
 
 void PrismGraph::mouseDrag(const juce::MouseEvent& event)
 {
-    dragSelectedBandTo(event.position);
+    dragSelectedBandTo(event.position, true);
+}
+
+void PrismGraph::mouseUp(const juce::MouseEvent&)
+{
+    endDragGesture();
 }
 
 void PrismGraph::mouseMove(const juce::MouseEvent& event)
@@ -338,8 +349,16 @@ bool PrismGraph::selectOrCreateBandAt(juce::Point<float> point)
 
 void PrismGraph::dragSelectedBandTo(juce::Point<float> point)
 {
+    dragSelectedBandTo(point, false);
+}
+
+void PrismGraph::dragSelectedBandTo(juce::Point<float> point, bool keepGestureOpen)
+{
     if (state == nullptr || selectedBand <= 0 || ! bandEnabled(selectedBand))
         return;
+
+    if (keepGestureOpen)
+        beginDragGesture();
 
     const auto graph = graphBounds();
     const auto constrained = juce::Point<float>(
@@ -347,8 +366,17 @@ void PrismGraph::dragSelectedBandTo(juce::Point<float> point)
         juce::jlimit(graph.getY(), graph.getBottom(), point.y));
     const auto prefix = bandPrefix(selectedBand);
 
-    setParameterValue(prefix + "Frequency", xToFrequency(constrained.x, graph));
-    setParameterValue(prefix + "Gain", yToGain(constrained.y, graph, visibleGainRangeDb()));
+    if (keepGestureOpen)
+    {
+        setParameterValueWithoutGesture(prefix + "Frequency", xToFrequency(constrained.x, graph));
+        setParameterValueWithoutGesture(prefix + "Gain", yToGain(constrained.y, graph, visibleGainRangeDb()));
+    }
+    else
+    {
+        setParameterValue(prefix + "Frequency", xToFrequency(constrained.x, graph));
+        setParameterValue(prefix + "Gain", yToGain(constrained.y, graph, visibleGainRangeDb()));
+    }
+
     repaint();
 }
 
@@ -437,6 +465,9 @@ float PrismGraph::visibleGainRangeDb() const
 
 void PrismGraph::setSelectedBand(int oneBasedIndex)
 {
+    if (oneBasedIndex != selectedBand)
+        endDragGesture();
+
     selectedBand = oneBasedIndex;
 
     if (onSelectedBandChanged)
@@ -678,9 +709,60 @@ void PrismGraph::setParameterValue(const juce::String& id, float plainValue)
 
     if (auto* parameter = state->getParameter(id))
     {
+        const auto normalizedValue = parameter->convertTo0to1(plainValue);
+        if (std::abs(parameter->getValue() - normalizedValue) < 1.0e-6f)
+            return;
+
         parameter->beginChangeGesture();
-        parameter->setValueNotifyingHost(parameter->convertTo0to1(plainValue));
+        parameter->setValueNotifyingHost(normalizedValue);
         parameter->endChangeGesture();
+    }
+}
+
+void PrismGraph::beginDragGesture()
+{
+    if (state == nullptr || selectedBand <= 0)
+        return;
+
+    if (dragGestureBand == selectedBand && dragFrequencyParameter != nullptr && dragGainParameter != nullptr)
+        return;
+
+    endDragGesture();
+
+    const auto prefix = bandPrefix(selectedBand);
+    dragFrequencyParameter = state->getParameter(prefix + "Frequency");
+    dragGainParameter = state->getParameter(prefix + "Gain");
+
+    if (dragFrequencyParameter != nullptr)
+        dragFrequencyParameter->beginChangeGesture();
+    if (dragGainParameter != nullptr)
+        dragGainParameter->beginChangeGesture();
+
+    dragGestureBand = selectedBand;
+}
+
+void PrismGraph::endDragGesture()
+{
+    if (dragFrequencyParameter != nullptr)
+        dragFrequencyParameter->endChangeGesture();
+    if (dragGainParameter != nullptr)
+        dragGainParameter->endChangeGesture();
+
+    dragGestureBand = 0;
+    dragFrequencyParameter = nullptr;
+    dragGainParameter = nullptr;
+}
+
+void PrismGraph::setParameterValueWithoutGesture(const juce::String& id, float plainValue)
+{
+    if (state == nullptr)
+        return;
+
+    if (auto* parameter = state->getParameter(id))
+    {
+        const auto normalizedValue = parameter->convertTo0to1(plainValue);
+        if (std::abs(parameter->getValue() - normalizedValue) >= 1.0e-6f)
+            parameter->setValueNotifyingHost(normalizedValue);
     }
 }
 

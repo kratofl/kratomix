@@ -32,7 +32,14 @@ private:
     void updateFilterCoefficients(double processingSampleRate,
                                   std::array<StereoFilter, prism::maxBands>& targetFilters,
                                   std::array<StereoFilter, prism::maxBands>& targetPhaseFilters);
+    void updateFilterCoefficientsIfNeeded(double processingSampleRate,
+                                          std::array<StereoFilter, prism::maxBands>& targetFilters,
+                                          std::array<StereoFilter, prism::maxBands>& targetPhaseFilters,
+                                          uint64_t& activeDigest);
     void updateDetectorCoefficients();
+    void updateDetectorCoefficientsIfNeeded();
+    uint64_t makeFilterDigest(double processingSampleRate) const noexcept;
+    uint64_t makeDetectorDigest() const noexcept;
     static float monoSampleAt(const juce::AudioBuffer<float>& buffer, int sample) noexcept;
     static float bandLimitedRmsDb(const juce::AudioBuffer<float>& buffer, int numSamples, Filter& filter) noexcept;
 
@@ -55,5 +62,9 @@ private:
 
     PrismSettings settings;
     double sampleRate = 44100.0;
+    uint64_t activeNativeFilterDigest = 0;
+    uint64_t active2xFilterDigest = 0;
+    uint64_t active4xFilterDigest = 0;
+    uint64_t activeDetectorDigest = 0;
 };
 }

@@ -18,6 +18,7 @@ public:
 
 private:
     static constexpr int impulseSize = 4096;
+    static constexpr int rebuildSettleBlocks = 24;
 
     void rebuildImpulseIfNeeded();
     void buildImpulseResponse();
@@ -33,6 +34,7 @@ private:
     int latencySamples = impulseSize / 2;
     uint64_t activeDigest = 0;
     uint64_t pendingDigest = 1;
+    int pendingRebuildBlocks = 0;
     bool prepared = false;
 };
 }

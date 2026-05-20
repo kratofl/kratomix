@@ -93,3 +93,56 @@ func TestFormatInstallStateShowsMissingFormat(t *testing.T) {
 		t.Fatalf("formatInstallState() = %q, want %q", got, want)
 	}
 }
+
+func TestRemoveStaleUserScopeCopiesAfterSystemInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	staleAU := filepath.Join(home, "Library", "Audio", "Plug-Ins", "Components", "Kratomix Prism EQ.component")
+	if err := os.MkdirAll(filepath.Join(staleAU, "Contents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs []string
+	jobs := []installJob{{
+		target: filepath.Join(string(os.PathSeparator), "Library", "Audio", "Plug-Ins", "Components", "Kratomix Prism EQ.component"),
+		format: "au",
+		name:   "Kratomix Prism EQ",
+	}}
+
+	err := removeStaleUserScopeCopies(jobs, "system", func(format string, args ...any) {
+		logs = append(logs, format)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(staleAU); !os.IsNotExist(err) {
+		t.Fatalf("expected stale user AU to be removed, stat err = %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected one cleanup log, got %d", len(logs))
+	}
+}
+
+func TestRemoveStaleUserScopeCopiesSkipsUserInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	staleAU := filepath.Join(home, "Library", "Audio", "Plug-Ins", "Components", "Kratomix Prism EQ.component")
+	if err := os.MkdirAll(filepath.Join(staleAU, "Contents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	jobs := []installJob{{
+		target: staleAU,
+		format: "au",
+		name:   "Kratomix Prism EQ",
+	}}
+
+	if err := removeStaleUserScopeCopies(jobs, "user", func(string, ...any) {}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(staleAU); err != nil {
+		t.Fatalf("expected user install cleanup to leave bundle in place: %v", err)
+	}
+}

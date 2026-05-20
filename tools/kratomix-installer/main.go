@@ -1318,7 +1318,40 @@ func installJobs(jobs []installJob, scope string, logf func(string, ...any)) err
 		builder.WriteString(" >/dev/null 2>&1 || true\n")
 	}
 
-	return runPrivileged(builder.String())
+	if err := runPrivileged(builder.String()); err != nil {
+		return err
+	}
+	return removeStaleUserScopeCopies(jobs, scope, logf)
+}
+
+func removeStaleUserScopeCopies(jobs []installJob, scope string, logf func(string, ...any)) error {
+	if normalizedScope(scope) != "system" {
+		return nil
+	}
+
+	for _, job := range jobs {
+		userBase, err := installBasePath(job.format, "user")
+		if err != nil {
+			return err
+		}
+		staleTarget := filepath.Join(userBase, filepath.Base(job.target))
+		if staleTarget == job.target {
+			continue
+		}
+
+		if _, err := os.Stat(staleTarget); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+
+		logf("Removing stale user-scope copy %s", staleTarget)
+		if err := os.RemoveAll(staleTarget); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runCommand(name string, args ...string) error {
