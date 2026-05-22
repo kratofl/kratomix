@@ -71,13 +71,6 @@ namespace
 VelvetChannelAudioProcessorEditor::VelvetChannelAudioProcessorEditor(VelvetChannelAudioProcessor& p)
     : AudioProcessorEditor(&p),
       audioProcessor(p),
-      inputSlider(),
-      driveSlider([](double value) { return controls::snapDrive(static_cast<float>(value)); }),
-      highPassSlider([](double value) { return controls::snapHighPass(static_cast<float>(value)); }),
-      warmthSlider([](double value) { return controls::snapWarmth(static_cast<float>(value)); }),
-      presenceSlider([](double value) { return controls::snapPresence(static_cast<float>(value)); }),
-      airSlider([](double value) { return controls::snapAir(static_cast<float>(value)); }),
-      outputSlider(),
       vuMeter([this] { return audioProcessor.getVuLevel(); }),
       bypassAttachment(audioProcessor.parameters, ParamID::bypass, bypassButton),
       inputAttachment(audioProcessor.parameters, ParamID::inputGain, inputSlider),
@@ -100,31 +93,31 @@ VelvetChannelAudioProcessorEditor::VelvetChannelAudioProcessorEditor(VelvetChann
                     driveLabel,
                     "DRIVE",
                     [](double value) { return controls::formatDrive(static_cast<float>(value)); },
-                    [](const juce::String& text) { return controls::snapDrive(static_cast<float>(controls::parseNumericText(text, 0.0))); },
+                    [](const juce::String& text) { return controls::parseNumericText(text, 0.0); },
                     0.0);
     configureSlider(highPassSlider,
                     highPassLabel,
                     "HPF",
                     [](double value) { return controls::formatFrequency(static_cast<float>(value)); },
-                    [](const juce::String& text) { return controls::snapHighPass(static_cast<float>(controls::parseNumericText(text, 20.0))); },
+                    [](const juce::String& text) { return controls::parseNumericText(text, 20.0); },
                     20.0);
     configureSlider(warmthSlider,
                     warmthLabel,
                     "WARMTH",
                     [](double value) { return controls::formatWarmth(static_cast<float>(value)); },
-                    [](const juce::String& text) { return controls::snapWarmth(static_cast<float>(controls::parseNumericText(text, 0.0))); },
+                    [](const juce::String& text) { return controls::parseNumericText(text, 0.0); },
                     0.0);
     configureSlider(presenceSlider,
                     presenceLabel,
                     "PRESENCE",
                     [](double value) { return controls::formatPresence(static_cast<float>(value)); },
-                    [](const juce::String& text) { return controls::snapPresence(static_cast<float>(controls::parseNumericText(text, 0.0))); },
+                    [](const juce::String& text) { return controls::parseNumericText(text, 0.0); },
                     0.0);
     configureSlider(airSlider,
                     airLabel,
                     "AIR",
                     [](double value) { return controls::formatAir(static_cast<float>(value)); },
-                    [](const juce::String& text) { return controls::snapAir(static_cast<float>(controls::parseNumericText(text, 0.0))); },
+                    [](const juce::String& text) { return controls::parseNumericText(text, 0.0); },
                     0.0);
     configureSlider(outputSlider,
                     outputLabel,
@@ -235,6 +228,7 @@ void VelvetChannelAudioProcessorEditor::configureSlider(juce::Slider& slider,
                                                         std::function<double(const juce::String&)> parser,
                                                         double doubleClickValue)
 {
+    slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setRotaryParameters(knobStartAngle, knobEndAngle, true);
     slider.setLookAndFeel(&rackLookAndFeel);
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 78, 22);

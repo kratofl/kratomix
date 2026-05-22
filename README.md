@@ -49,7 +49,9 @@ The installer app is unsigned. On first launch, macOS may require right-clicking
 ## Layout
 
 - `core/cmake/`: shared JUCE and plugin registration helpers.
-- `plugins/velvet-channel/`: the current production plugin.
+- `plugins/velvet-channel/`: the first production channel-strip plugin.
+- `plugins/prism-eq/`: graph-first dynamic EQ foundation.
+- `plugins/multiband-compressor/`: graph-led multiband dynamics processor.
 - `templates/effect-plugin/`: neutral starter template for future plugins.
 - `tools/new-plugin.py`: generator behind `make new-plugin`.
 - `mk/*.mk`: root GNU Make command layer.
@@ -119,6 +121,7 @@ make new-plugin SLUG=tape-bloom NAME="Kratomix Tape Bloom" CODE=TBlo
 
 - `Kratomix Velvet Channel`: warm source-track strip with stepped EQ color, harmonic drive, hardware-style bypass, and a central VU meter. See [plugins/velvet-channel/README.md](/Users/kratofl/Projects/kratomix/plugins/velvet-channel/README.md).
 - `Kratomix Prism EQ`: graph-first dynamic EQ foundation with stable 16-band parameters, neutral processing, and a graph-led editor shell. See [plugins/prism-eq/README.md](/Users/kratofl/Projects/kratomix/plugins/prism-eq/README.md).
+- `Kratomix Multiband Compressor`: graph-led six-band dynamics processor with draggable crossovers, sidechain-aware detection, and band-focused controls. See [plugins/multiband-compressor/README.md](/Users/kratofl/Projects/kratomix/plugins/multiband-compressor/README.md).
 
 ## License
 
