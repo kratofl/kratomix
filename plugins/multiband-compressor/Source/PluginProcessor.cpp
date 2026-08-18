@@ -4,6 +4,21 @@
 namespace
 {
 constexpr auto stateId = "Parameters";
+
+bool stateContainsParameter(const juce::ValueTree& state, const juce::String& parameterId)
+{
+    for (const auto& child : state)
+        if (child.getProperty("id").toString() == parameterId)
+            return true;
+
+    return false;
+}
+
+void setPlainParameter(juce::AudioProcessorValueTreeState& state, const juce::String& parameterId, float value)
+{
+    if (auto* parameter = state.getParameter(parameterId))
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+}
 }
 
 namespace kratomix
@@ -99,8 +114,31 @@ void MultibandCompressorAudioProcessor::setStateInformation(const void* data, in
 {
     std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
 
-    if (xml != nullptr && xml->hasTagName(parameters.state.getType()))
-        parameters.replaceState(juce::ValueTree::fromXml(*xml));
+    if (xml == nullptr || ! xml->hasTagName(parameters.state.getType()))
+        return;
+
+    auto restoredState = juce::ValueTree::fromXml(*xml);
+    const auto requiresFreeBandMigration = ! stateContainsParameter(restoredState, multiband::bandFrequencyIds[0]);
+    parameters.replaceState(restoredState);
+
+    if (! requiresFreeBandMigration)
+        return;
+
+    std::array<float, multiband::maxBands + 1> edges {};
+    edges.front() = 20.0f;
+    edges.back() = 20000.0f;
+    for (int index = 0; index < multiband::crossoverCount; ++index)
+        edges[static_cast<size_t>(index + 1)] = parameters.getRawParameterValue(multiband::crossoverFrequencyIds[static_cast<size_t>(index)])->load();
+
+    for (int index = 0; index < multiband::maxBands; ++index)
+    {
+        const auto low = juce::jlimit(20.0f, 19999.0f, edges[static_cast<size_t>(index)]);
+        const auto high = juce::jlimit(low + 1.0f, 20000.0f, edges[static_cast<size_t>(index + 1)]);
+        const auto centre = std::sqrt(low * high);
+        const auto width = std::log2(high / low);
+        setPlainParameter(parameters, multiband::bandFrequencyIds[static_cast<size_t>(index)], centre);
+        setPlainParameter(parameters, multiband::bandWidthIds[static_cast<size_t>(index)], width);
+    }
 }
 
 float MultibandCompressorAudioProcessor::getOutputLevel() const noexcept
@@ -130,12 +168,11 @@ MultibandSettings MultibandCompressorAudioProcessor::readSettings() const
         static_cast<int>(multiband::LookaheadMode::fiveMilliseconds),
         static_cast<int>(std::round(parameters.getRawParameterValue(multiband::lookaheadModeId)->load()))));
 
-    for (int index = 0; index < multiband::crossoverCount; ++index)
-        current.crossoverFrequencies[static_cast<size_t>(index)] = parameters.getRawParameterValue(multiband::crossoverFrequencyIds[static_cast<size_t>(index)])->load();
-
     for (int index = 0; index < multiband::maxBands; ++index)
     {
         auto& band = current.bands[static_cast<size_t>(index)];
+        band.frequencyHz = parameters.getRawParameterValue(multiband::bandFrequencyIds[static_cast<size_t>(index)])->load();
+        band.widthOctaves = parameters.getRawParameterValue(multiband::bandWidthIds[static_cast<size_t>(index)])->load();
         band.enabled = parameters.getRawParameterValue(multiband::bandEnabledIds[static_cast<size_t>(index)])->load() >= 0.5f;
         band.solo = parameters.getRawParameterValue(multiband::bandSoloIds[static_cast<size_t>(index)])->load() >= 0.5f;
         band.audition = parameters.getRawParameterValue(multiband::bandAuditionIds[static_cast<size_t>(index)])->load() >= 0.5f;

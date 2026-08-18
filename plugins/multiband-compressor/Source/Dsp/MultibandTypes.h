@@ -23,9 +23,11 @@ struct MultibandAnalyzerFrame
 
 struct MultibandBandSettings
 {
-    bool enabled = true;
+    bool enabled = false;
     bool solo = false;
     bool audition = false;
+    float frequencyHz = 1000.0f;
+    float widthOctaves = 2.0f;
     float thresholdDb = -24.0f;
     float rangeDb = -6.0f;
     float ratio = 2.0f;
@@ -46,7 +48,6 @@ struct MultibandSettings
     bool bypassed = false;
     multiband::AnalyzerMode analyzerMode = multiband::AnalyzerMode::inputOutput;
     multiband::LookaheadMode lookaheadMode = multiband::LookaheadMode::off;
-    std::array<float, multiband::crossoverCount> crossoverFrequencies = multiband::defaultCrossoverFrequencies;
     std::array<MultibandBandSettings, multiband::maxBands> bands {};
 };
 }

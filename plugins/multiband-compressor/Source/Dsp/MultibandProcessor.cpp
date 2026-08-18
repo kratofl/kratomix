@@ -44,94 +44,72 @@ bool shouldHearBand(const MultibandBandSettings& band, bool anySoloOrAudition) n
 }
 }
 
-void MultibandSplitter::prepare(const juce::dsp::ProcessSpec& spec)
+void MultibandBandFilter::prepare(const juce::dsp::ProcessSpec& spec)
 {
-    for (auto& filter : lowpassFilters)
-    {
-        filter.setType(Filter::Type::lowpass);
-        filter.prepare(spec);
-    }
+    processingSampleRate = spec.sampleRate;
+    highpass.setType(Filter::Type::highpass);
+    lowpass.setType(Filter::Type::lowpass);
+    highpass.prepare(spec);
+    lowpass.prepare(spec);
+    centreSmoother.reset(processingSampleRate, 0.02);
+    widthSmoother.reset(processingSampleRate, 0.02);
+    centreSmoother.setCurrentAndTargetValue(1000.0f);
+    widthSmoother.setCurrentAndTargetValue(2.0f);
+    updateCutoffs(1000.0f, 2.0f);
+}
 
-    for (auto& filter : highpassFilters)
-    {
-        filter.setType(Filter::Type::highpass);
-        filter.prepare(spec);
-    }
+void MultibandBandFilter::reset()
+{
+    highpass.reset();
+    lowpass.reset();
+    samplesUntilCutoffUpdate = 0;
+}
 
-    for (auto& bandFilters : allpassFilters)
+void MultibandBandFilter::setBand(float centreFrequency, float widthOctaves, double sampleRate)
+{
+    processingSampleRate = sampleRate;
+    centreSmoother.setTargetValue(juce::jlimit(20.0f, static_cast<float>(sampleRate * 0.45), centreFrequency));
+    widthSmoother.setTargetValue(juce::jlimit(0.25f, 6.0f, widthOctaves));
+}
+
+void MultibandBandFilter::updateCutoffs(float centreFrequency, float widthOctaves)
+{
+    const auto safeCentre = juce::jlimit(20.0f, static_cast<float>(processingSampleRate * 0.45), centreFrequency);
+    const auto safeWidth = juce::jlimit(0.25f, 6.0f, widthOctaves);
+    const auto halfBandRatio = std::pow(2.0f, safeWidth * 0.5f);
+    const auto lowEdge = juce::jlimit(20.0f, static_cast<float>(processingSampleRate * 0.44), safeCentre / halfBandRatio);
+    const auto highEdge = juce::jlimit(lowEdge * 1.02f,
+                                       static_cast<float>(processingSampleRate * 0.45),
+                                       safeCentre * halfBandRatio);
+
+    highpass.setCutoffFrequency(lowEdge);
+    lowpass.setCutoffFrequency(highEdge);
+}
+
+void MultibandBandFilter::process(const juce::AudioBuffer<float>& source,
+                                  juce::AudioBuffer<float>& destination,
+                                  int numChannels,
+                                  int numSamples) noexcept
+{
+    const auto channelsToProcess = juce::jmin(numChannels, source.getNumChannels(), destination.getNumChannels());
+    const auto samplesToProcess = juce::jmin(numSamples, source.getNumSamples(), destination.getNumSamples());
+    destination.clear(0, samplesToProcess);
+
+    for (int sample = 0; sample < samplesToProcess; ++sample)
     {
-        for (auto& filter : bandFilters)
+        const auto centre = centreSmoother.getNextValue();
+        const auto width = widthSmoother.getNextValue();
+        if (samplesUntilCutoffUpdate-- <= 0)
         {
-            filter.setType(Filter::Type::allpass);
-            filter.prepare(spec);
-        }
-    }
-}
-
-void MultibandSplitter::reset()
-{
-    for (auto& filter : lowpassFilters)
-        filter.reset();
-    for (auto& filter : highpassFilters)
-        filter.reset();
-    for (auto& bandFilters : allpassFilters)
-        for (auto& filter : bandFilters)
-            filter.reset();
-}
-
-void MultibandSplitter::setCrossovers(const std::array<float, multiband::crossoverCount>& frequencies)
-{
-    for (int index = 0; index < multiband::crossoverCount; ++index)
-    {
-        const auto cutoff = frequencies[static_cast<size_t>(index)];
-        lowpassFilters[static_cast<size_t>(index)].setCutoffFrequency(cutoff);
-        highpassFilters[static_cast<size_t>(index)].setCutoffFrequency(cutoff);
-
-        for (auto& bandFilters : allpassFilters)
-            bandFilters[static_cast<size_t>(index)].setCutoffFrequency(cutoff);
-    }
-}
-
-void MultibandSplitter::split(const juce::AudioBuffer<float>& source,
-                              std::array<juce::AudioBuffer<float>, multiband::maxBands>& destination,
-                              int numChannels,
-                              int numSamples) noexcept
-{
-    const auto channelsToProcess = juce::jmin(numChannels, source.getNumChannels(), destination[0].getNumChannels());
-    const auto samplesToProcess = juce::jmin(numSamples, source.getNumSamples(), destination[0].getNumSamples());
-
-    for (auto& band : destination)
-        band.clear(0, samplesToProcess);
-
-    for (int channel = 0; channel < channelsToProcess; ++channel)
-    {
-        for (int sample = 0; sample < samplesToProcess; ++sample)
-        {
-            auto residual = source.getSample(channel, sample);
-
-            for (int crossover = 0; crossover < multiband::crossoverCount; ++crossover)
-            {
-                const auto low = lowpassFilters[static_cast<size_t>(crossover)].processSample(channel, residual);
-                residual = highpassFilters[static_cast<size_t>(crossover)].processSample(channel, residual);
-                destination[static_cast<size_t>(crossover)].setSample(channel, sample, low);
-            }
-
-            destination[static_cast<size_t>(multiband::maxBands - 1)].setSample(channel, sample, residual);
+            updateCutoffs(centre, width);
+            samplesUntilCutoffUpdate = 15;
         }
 
-        for (int band = 0; band < multiband::maxBands - 1; ++band)
+        for (int channel = 0; channel < channelsToProcess; ++channel)
         {
-            auto& bandBuffer = destination[static_cast<size_t>(band)];
-
-            for (int sample = 0; sample < samplesToProcess; ++sample)
-            {
-                auto value = bandBuffer.getSample(channel, sample);
-
-                for (int crossover = band + 1; crossover < multiband::crossoverCount; ++crossover)
-                    value = allpassFilters[static_cast<size_t>(band)][static_cast<size_t>(crossover)].processSample(channel, value);
-
-                bandBuffer.setSample(channel, sample, value);
-            }
+            auto value = highpass.processSample(channel, source.getSample(channel, sample));
+            value = lowpass.processSample(channel, value);
+            destination.setSample(channel, sample, value);
         }
     }
 }
@@ -154,13 +132,13 @@ void MultibandProcessor::prepare(const juce::dsp::ProcessSpec& spec)
     preparedBlockSize = static_cast<int>(spec.maximumBlockSize);
     allocateBuffers(preparedChannels, preparedBlockSize);
 
-    juce::dsp::ProcessSpec splitterSpec = spec;
-    splitterSpec.numChannels = static_cast<juce::uint32>(preparedChannels);
-    audioSplitter.prepare(splitterSpec);
-    detectorSplitter.prepare(splitterSpec);
-    sidechainSplitter.prepare(splitterSpec);
-    lookaheadDelay.prepare(splitterSpec);
-    dryDelay.prepare(splitterSpec);
+    juce::dsp::ProcessSpec filterSpec = spec;
+    filterSpec.numChannels = static_cast<juce::uint32>(preparedChannels);
+    for (auto* filters : { &audioFilters, &detectorFilters, &sidechainFilters })
+        for (auto& filter : *filters)
+            filter.prepare(filterSpec);
+    lookaheadDelay.prepare(filterSpec);
+    dryDelay.prepare(filterSpec);
 
     inputGainDbSmoother.reset(sampleRate, 0.02);
     outputGainDbSmoother.reset(sampleRate, 0.02);
@@ -168,15 +146,15 @@ void MultibandProcessor::prepare(const juce::dsp::ProcessSpec& spec)
     wetSmoother.reset(sampleRate, 0.01);
 
     reset();
-    updateCrossovers();
+    updateBandFilters();
     applyTargetsImmediately();
 }
 
 void MultibandProcessor::reset()
 {
-    audioSplitter.reset();
-    detectorSplitter.reset();
-    sidechainSplitter.reset();
+    for (auto* filters : { &audioFilters, &detectorFilters, &sidechainFilters })
+        for (auto& filter : *filters)
+            filter.reset();
     lookaheadDelay.reset();
     dryDelay.reset();
     analyzerWriteIndex.store(0, std::memory_order_relaxed);
@@ -206,6 +184,8 @@ void MultibandProcessor::updateSettings(const MultibandSettings& newSettings)
 
     for (auto& band : settings.bands)
     {
+        band.frequencyHz = juce::jlimit(20.0f, 20000.0f, band.frequencyHz);
+        band.widthOctaves = juce::jlimit(0.25f, 6.0f, band.widthOctaves);
         band.ratio = juce::jmax(1.0f, band.ratio);
         band.attackMs = juce::jmax(0.1f, band.attackMs);
         band.releaseMs = juce::jmax(5.0f, band.releaseMs);
@@ -224,7 +204,7 @@ void MultibandProcessor::updateSettings(const MultibandSettings& newSettings)
     lookaheadDelay.setDelay(static_cast<float>(latency));
     dryDelay.setDelay(static_cast<float>(latency));
 
-    updateCrossovers();
+    updateBandFilters();
 
     if (! hasProcessedAudio)
         applyTargetsImmediately();
@@ -268,24 +248,27 @@ void MultibandProcessor::process(juce::AudioBuffer<float>& buffer, const juce::A
 
     processLookahead(buffer, numChannels, numSamples);
 
-    audioSplitter.split(buffer, audioBands, numChannels, numSamples);
-    detectorSplitter.split(detectorBuffer, detectorBands, numChannels, numSamples);
-
     const auto sidechainAvailable = sidechainBuffer != nullptr
                                     && sidechainBuffer->getNumChannels() > 0
                                     && sidechainBuffer->getNumSamples() > 0;
-    if (sidechainAvailable)
-        sidechainSplitter.split(*sidechainBuffer, sidechainBands, numChannels, juce::jmin(numSamples, sidechainBuffer->getNumSamples()));
-    else
-        for (auto& band : sidechainBands)
-            band.clear(0, numSamples);
+
+    for (int bandIndex = 0; bandIndex < multiband::maxBands; ++bandIndex)
+    {
+        const auto index = static_cast<size_t>(bandIndex);
+        audioFilters[index].process(buffer, audioBands[index], numChannels, numSamples);
+        detectorFilters[index].process(detectorBuffer, detectorBands[index], numChannels, numSamples);
+
+        if (sidechainAvailable)
+            sidechainFilters[index].process(*sidechainBuffer, sidechainBands[index], numChannels, numSamples);
+        else
+            sidechainBands[index].clear(0, numSamples);
+    }
 
     const auto anySoloOrAudition = std::any_of(settings.bands.begin(), settings.bands.end(), [](const auto& band)
     {
-        return band.solo || band.audition;
+        return band.enabled && (band.solo || band.audition);
     });
 
-    buffer.clear(0, numSamples);
     double energy = 0.0;
 
     for (int sample = 0; sample < numSamples; ++sample)
@@ -313,18 +296,22 @@ void MultibandProcessor::process(juce::AudioBuffer<float>& buffer, const juce::A
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
-            auto sum = 0.0f;
+            auto sum = anySoloOrAudition ? 0.0f : buffer.getSample(channel, sample);
 
             for (int bandIndex = 0; bandIndex < multiband::maxBands; ++bandIndex)
             {
                 const auto& band = settings.bands[static_cast<size_t>(bandIndex)];
-                if (! shouldHearBand(band, anySoloOrAudition))
+                if (! band.enabled || ! shouldHearBand(band, anySoloOrAudition))
                     continue;
 
-                const auto makeupDb = band.enabled ? band.makeupDb : 0.0f;
-                const auto gain = decibelsToGain(sampleGainDb[static_cast<size_t>(bandIndex)] + makeupDb);
-                const auto bandSample = audioBands[static_cast<size_t>(bandIndex)].getSample(channel, sample);
-                sum += bandSample * gain;
+                const auto gain = decibelsToGain(sampleGainDb[static_cast<size_t>(bandIndex)] + band.makeupDb);
+                const auto detectorUsesExternal = sidechainAvailable && band.detectorSource == multiband::DetectorSource::external;
+                const auto& audibleBand = band.audition
+                                              ? (detectorUsesExternal ? sidechainBands[static_cast<size_t>(bandIndex)]
+                                                                      : detectorBands[static_cast<size_t>(bandIndex)])
+                                              : audioBands[static_cast<size_t>(bandIndex)];
+                const auto bandSample = audibleBand.getSample(channel, sample);
+                sum += anySoloOrAudition ? bandSample * gain : bandSample * (gain - 1.0f);
                 bandEnergyState[static_cast<size_t>(bandIndex)] = bandEnergyState[static_cast<size_t>(bandIndex)] * 0.995f
                                                                   + std::abs(bandSample) * 0.005f;
             }
@@ -409,25 +396,14 @@ void MultibandProcessor::applyTargetsImmediately()
     wetSmoother.setCurrentAndTargetValue(settings.bypassed ? 0.0f : 1.0f);
 }
 
-void MultibandProcessor::updateCrossovers()
+void MultibandProcessor::updateBandFilters()
 {
-    const auto upperLimit = juce::jmax(200.0f, static_cast<float>(sampleRate * 0.45));
-    const auto minimumGap = 30.0f;
-    auto previous = 20.0f;
-
-    for (int index = 0; index < multiband::crossoverCount; ++index)
+    for (int index = 0; index < multiband::maxBands; ++index)
     {
-        const auto remaining = static_cast<float>(multiband::crossoverCount - index - 1);
-        const auto lowLimit = previous + minimumGap;
-        const auto highLimit = upperLimit - remaining * minimumGap;
-        const auto requested = settings.crossoverFrequencies[static_cast<size_t>(index)];
-        activeCrossovers[static_cast<size_t>(index)] = juce::jlimit(lowLimit, juce::jmax(lowLimit, highLimit), requested);
-        previous = activeCrossovers[static_cast<size_t>(index)];
+        const auto& band = settings.bands[static_cast<size_t>(index)];
+        for (auto* filters : { &audioFilters, &detectorFilters, &sidechainFilters })
+            (*filters)[static_cast<size_t>(index)].setBand(band.frequencyHz, band.widthOctaves, sampleRate);
     }
-
-    audioSplitter.setCrossovers(activeCrossovers);
-    detectorSplitter.setCrossovers(activeCrossovers);
-    sidechainSplitter.setCrossovers(activeCrossovers);
 }
 
 void MultibandProcessor::processLookahead(juce::AudioBuffer<float>& audioBuffer, int numChannels, int numSamples)

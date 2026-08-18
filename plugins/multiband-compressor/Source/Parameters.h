@@ -44,6 +44,7 @@ inline constexpr const char* bypassId = "bypass";
 inline constexpr const char* analyzerModeId = "analyzerMode";
 inline constexpr const char* lookaheadModeId = "lookaheadMode";
 
+// Retained so released sessions and automation lanes keep their stable parameter IDs.
 inline constexpr std::array<const char*, crossoverCount> crossoverFrequencyIds {{
     "crossover01Frequency",
     "crossover02Frequency",
@@ -58,6 +59,18 @@ inline constexpr std::array<float, crossoverCount> defaultCrossoverFrequencies {
     2000.0f,
     8000.0f,
     12000.0f
+}};
+
+inline constexpr std::array<const char*, maxBands> bandFrequencyIds {{
+    "band01Frequency", "band02Frequency", "band03Frequency", "band04Frequency", "band05Frequency", "band06Frequency"
+}};
+
+inline constexpr std::array<const char*, maxBands> bandWidthIds {{
+    "band01Width", "band02Width", "band03Width", "band04Width", "band05Width", "band06Width"
+}};
+
+inline constexpr std::array<float, maxBands> defaultBandFrequencies {{
+    80.0f, 250.0f, 1000.0f, 4000.0f, 8000.0f, 14000.0f
 }};
 
 inline constexpr std::array<const char*, maxBands> bandEnabledIds {{
@@ -160,6 +173,13 @@ inline juce::NormalisableRange<float> ratioRange()
     return range;
 }
 
+inline juce::NormalisableRange<float> widthRange()
+{
+    juce::NormalisableRange<float> range { 0.25f, 6.0f, 0.01f };
+    range.setSkewForCentre(2.0f);
+    return range;
+}
+
 inline juce::NormalisableRange<float> timeRange(float minimum, float maximum, float centre)
 {
     juce::NormalisableRange<float> range { minimum, maximum, 0.1f };
@@ -242,12 +262,31 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     for (int index = 0; index < maxBands; ++index)
     {
         const auto namePrefix = bandLabel(index) + " ";
-        const auto enabledByDefault = index < 4;
+
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { bandFrequencyIds[static_cast<size_t>(index)], 1 },
+            namePrefix + "Frequency",
+            frequencyRange(),
+            defaultBandFrequencies[static_cast<size_t>(index)],
+            juce::AudioParameterFloatAttributes()
+                .withLabel("Hz")
+                .withStringFromValueFunction(displayFrequency)
+                .withValueFromStringFunction(parseFloat)));
+
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { bandWidthIds[static_cast<size_t>(index)], 1 },
+            namePrefix + "Width",
+            widthRange(),
+            2.0f,
+            juce::AudioParameterFloatAttributes()
+                .withLabel("oct")
+                .withStringFromValueFunction([](float value, int) { return juce::String(value, 2); })
+                .withValueFromStringFunction(parseFloat)));
 
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID { bandEnabledIds[static_cast<size_t>(index)], 1 },
             namePrefix + "Enabled",
-            enabledByDefault));
+            false));
 
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID { bandSoloIds[static_cast<size_t>(index)], 1 },

@@ -6,7 +6,7 @@ namespace
 {
 constexpr float minFrequency = 20.0f;
 constexpr float maxFrequency = 20000.0f;
-constexpr float minimumCrossoverGap = 30.0f;
+constexpr float defaultWidthOctaves = 2.0f;
 
 juce::Colour graphBackground()
 {
@@ -56,19 +56,31 @@ MultibandGraph::MultibandGraph()
       window(fftSize, juce::dsp::WindowingFunction<float>::hann)
 {
     setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    setWantsKeyboardFocus(true);
     inputSpectrum.fill(-100.0f);
     outputSpectrum.fill(-100.0f);
 }
 
 MultibandGraph::~MultibandGraph()
 {
-    if (draggedCrossoverParameter != nullptr)
-        draggedCrossoverParameter->endChangeGesture();
+    endDragGesture();
 }
 
 void MultibandGraph::attachState(juce::AudioProcessorValueTreeState& stateToUse)
 {
+    endDragGesture();
     state = &stateToUse;
+    selectedBand = -1;
+
+    for (int index = 0; index < maxBands; ++index)
+    {
+        if (bandEnabled(index))
+        {
+            selectedBand = index;
+            break;
+        }
+    }
+
     repaint();
 }
 
@@ -88,7 +100,6 @@ void MultibandGraph::paint(juce::Graphics& g)
     g.setColour(juce::Colour::fromRGB(16, 17, 20));
     g.fillRoundedRectangle(graph, 8.0f);
 
-    drawBands(g, graph);
     drawGrid(g, graph);
 
     const auto analyzerMode = static_cast<int>(std::round(parameterValue(analyzerModeId, static_cast<float>(AnalyzerMode::inputOutput))));
@@ -101,22 +112,24 @@ void MultibandGraph::paint(juce::Graphics& g)
         || analyzerMode == static_cast<int>(AnalyzerMode::gainReduction))
         drawSpectrum(g, graph, outputSpectrum, juce::Colour::fromRGB(95, 211, 186).withAlpha(0.55f));
 
+    drawBands(g, graph);
     drawDynamics(g, graph);
-
-    const auto crossovers = readCrossoverFrequencies();
-    g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-    for (int index = 0; index < crossoverCount; ++index)
-    {
-        const auto x = frequencyToX(crossovers[static_cast<size_t>(index)], graph);
-        g.setColour(accentColour().withAlpha(index == draggedCrossover ? 0.9f : 0.65f));
-        g.drawVerticalLine(static_cast<int>(std::round(x)), graph.getY(), graph.getBottom());
-        g.fillRoundedRectangle(x - 4.0f, graph.getY() + 10.0f, 8.0f, 24.0f, 3.0f);
-    }
 
     g.setColour(juce::Colour::fromRGB(71, 61, 47));
     g.drawRoundedRectangle(graph, 8.0f, 1.0f);
 
-    if (hoverPoint.has_value() && graph.contains(*hoverPoint))
+    const auto hasAnyBand = std::any_of(bandEnabledIds.begin(), bandEnabledIds.end(), [this](const auto* id)
+    {
+        return parameterValue(id, 0.0f) >= 0.5f;
+    });
+
+    if (! hasAnyBand)
+    {
+        g.setColour(juce::Colour::fromRGB(250, 231, 202).withAlpha(0.72f));
+        g.setFont(juce::FontOptions(13.0f, juce::Font::bold));
+        g.drawText("DOUBLE-CLICK TO ADD A DYNAMIC BAND", graph.toNearestInt(), juce::Justification::centred);
+    }
+    else if (hoverPoint.has_value() && graph.contains(*hoverPoint))
     {
         const auto frequency = xToFrequency(hoverPoint->x, graph);
         g.setColour(juce::Colour::fromRGB(250, 231, 202));
@@ -127,45 +140,65 @@ void MultibandGraph::paint(juce::Graphics& g)
     }
 }
 
+void MultibandGraph::mouseDoubleClick(const juce::MouseEvent& event)
+{
+    if (! selectBandAt(event.position))
+        createBandAt(event.position);
+}
+
 void MultibandGraph::mouseDown(const juce::MouseEvent& event)
 {
+    grabKeyboardFocus();
     const auto graph = graphBounds();
     if (! graph.contains(event.position))
         return;
 
-    draggedCrossover = crossoverHandleAt(event.position.x);
-    if (draggedCrossover >= 0 && state != nullptr)
+    if (! selectBandAt(event.position))
     {
-        draggedCrossoverParameter = state->getParameter(crossoverFrequencyIds[static_cast<size_t>(draggedCrossover)]);
-        if (draggedCrossoverParameter != nullptr)
-            draggedCrossoverParameter->beginChangeGesture();
+        setSelectedBand(-1);
         return;
     }
 
-    setSelectedBand(bandIndexForX(event.position.x));
+    const auto bounds = boundsForBand(selectedBand);
+    const auto centreX = frequencyToX(bandFrequency(selectedBand), graph);
+    if (std::abs(event.position.x - bounds.getX()) <= 8.0f)
+        dragMode = DragMode::leftEdge;
+    else if (std::abs(event.position.x - bounds.getRight()) <= 8.0f)
+        dragMode = DragMode::rightEdge;
+    else
+        dragMode = DragMode::centre;
+
+    if (std::abs(event.position.x - centreX) <= 12.0f)
+        dragMode = DragMode::centre;
+
+    beginDragGesture();
 }
 
 void MultibandGraph::mouseDrag(const juce::MouseEvent& event)
 {
-    if (draggedCrossover < 0)
+    if (selectedBand < 0 || dragMode == DragMode::none)
         return;
 
-    const auto graph = graphBounds();
-    setCrossoverFrequency(draggedCrossover, xToFrequency(event.position.x, graph));
+    if (dragMode == DragMode::centre)
+    {
+        setSelectedBandFrequency(xToFrequency(event.position.x, graphBounds()));
+        return;
+    }
+
+    const auto centre = bandFrequency(selectedBand);
+    const auto edge = xToFrequency(event.position.x, graphBounds());
+    const auto width = 2.0f * std::abs(std::log2(juce::jmax(1.0e-3f, edge / centre)));
+    setSelectedBandWidth(width);
 }
 
 void MultibandGraph::mouseUp(const juce::MouseEvent&)
 {
-    if (draggedCrossoverParameter != nullptr)
-        draggedCrossoverParameter->endChangeGesture();
-
-    draggedCrossoverParameter = nullptr;
-    draggedCrossover = -1;
+    endDragGesture();
 }
 
 void MultibandGraph::mouseMove(const juce::MouseEvent& event)
 {
-    hoverPoint = event.position;
+    hoverPoint = graphBounds().contains(event.position) ? std::optional<juce::Point<float>>(event.position) : std::nullopt;
     repaint();
 }
 
@@ -175,76 +208,165 @@ void MultibandGraph::mouseExit(const juce::MouseEvent&)
     repaint();
 }
 
+void MultibandGraph::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
+{
+    if (selectedBand >= 0 && boundsForBand(selectedBand).contains(event.position))
+        setSelectedBandWidth(bandWidth(selectedBand) + wheel.deltaY * 0.75f);
+}
+
+bool MultibandGraph::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress(juce::KeyPress::deleteKey)
+        || key == juce::KeyPress(juce::KeyPress::backspaceKey))
+        return deleteSelectedBand();
+
+    return false;
+}
+
+bool MultibandGraph::createBandAt(juce::Point<float> point)
+{
+    if (state == nullptr || ! graphBounds().contains(point))
+        return false;
+
+    for (int index = 0; index < maxBands; ++index)
+    {
+        if (bandEnabled(index))
+            continue;
+
+        setParameterValue(bandFrequencyIds[static_cast<size_t>(index)], xToFrequency(point.x, graphBounds()));
+        setParameterValue(bandWidthIds[static_cast<size_t>(index)], defaultWidthOctaves);
+        setParameterValue(bandEnabledIds[static_cast<size_t>(index)], 1.0f);
+        setSelectedBand(index);
+        return true;
+    }
+
+    return false;
+}
+
+bool MultibandGraph::selectBandAt(juce::Point<float> point)
+{
+    auto nearestBand = -1;
+    auto nearestDistance = std::numeric_limits<float>::max();
+
+    for (int index = 0; index < maxBands; ++index)
+    {
+        if (! bandEnabled(index) || ! boundsForBand(index).contains(point))
+            continue;
+
+        const auto distance = std::abs(point.x - frequencyToX(bandFrequency(index), graphBounds()));
+        if (distance < nearestDistance)
+        {
+            nearestDistance = distance;
+            nearestBand = index;
+        }
+    }
+
+    if (nearestBand < 0)
+        return false;
+
+    setSelectedBand(nearestBand);
+    return true;
+}
+
+bool MultibandGraph::deleteSelectedBand()
+{
+    if (selectedBand < 0 || ! bandEnabled(selectedBand))
+        return false;
+
+    setParameterValue(bandEnabledIds[static_cast<size_t>(selectedBand)], 0.0f);
+
+    auto nextBand = -1;
+    for (int index = 0; index < maxBands; ++index)
+        if (bandEnabled(index))
+        {
+            nextBand = index;
+            break;
+        }
+
+    setSelectedBand(nextBand);
+    return true;
+}
+
+void MultibandGraph::setSelectedBandFrequency(float frequency)
+{
+    if (selectedBand < 0)
+        return;
+
+    setParameterValue(bandFrequencyIds[static_cast<size_t>(selectedBand)], juce::jlimit(minFrequency, maxFrequency, frequency));
+    repaint();
+}
+
+void MultibandGraph::setSelectedBandWidth(float widthOctaves)
+{
+    if (selectedBand < 0)
+        return;
+
+    setParameterValue(bandWidthIds[static_cast<size_t>(selectedBand)], juce::jlimit(0.25f, 6.0f, widthOctaves));
+    repaint();
+}
+
+juce::Rectangle<float> MultibandGraph::boundsForBand(int zeroBasedIndex) const
+{
+    if (zeroBasedIndex < 0 || zeroBasedIndex >= maxBands)
+        return {};
+
+    const auto graph = graphBounds();
+    const auto centre = bandFrequency(zeroBasedIndex);
+    const auto ratio = std::pow(2.0f, bandWidth(zeroBasedIndex) * 0.5f);
+    const auto low = juce::jlimit(minFrequency, maxFrequency, centre / ratio);
+    const auto high = juce::jlimit(minFrequency, maxFrequency, centre * ratio);
+    const auto left = frequencyToX(low, graph);
+    const auto right = frequencyToX(high, graph);
+    return { left, graph.getY(), juce::jmax(2.0f, right - left), graph.getHeight() };
+}
+
 void MultibandGraph::timerCallback()
 {
-    if (analyzerReader != nullptr)
+    if (analyzerReader)
+    {
         analyzerReader(analyzerFrame);
-
-    updateSpectrum();
-    repaint();
+        updateSpectrum();
+        repaint();
+    }
 }
 
 juce::Rectangle<float> MultibandGraph::graphBounds() const
 {
-    return getLocalBounds().toFloat().reduced(10.0f, 8.0f);
-}
-
-std::array<float, crossoverCount> MultibandGraph::readCrossoverFrequencies() const
-{
-    auto frequencies = defaultCrossoverFrequencies;
-    auto previous = minFrequency;
-
-    for (int index = 0; index < crossoverCount; ++index)
-    {
-        const auto requested = parameterValue(crossoverFrequencyIds[static_cast<size_t>(index)], defaultCrossoverFrequencies[static_cast<size_t>(index)]);
-        const auto remaining = static_cast<float>(crossoverCount - index - 1);
-        const auto lowLimit = previous + minimumCrossoverGap;
-        const auto highLimit = maxFrequency - remaining * minimumCrossoverGap;
-        frequencies[static_cast<size_t>(index)] = juce::jlimit(lowLimit, juce::jmax(lowLimit, highLimit), requested);
-        previous = frequencies[static_cast<size_t>(index)];
-    }
-
-    return frequencies;
-}
-
-int MultibandGraph::bandIndexForX(float x) const
-{
-    const auto graph = graphBounds();
-    const auto frequency = xToFrequency(x, graph);
-    const auto crossovers = readCrossoverFrequencies();
-
-    for (int index = 0; index < crossoverCount; ++index)
-        if (frequency < crossovers[static_cast<size_t>(index)])
-            return index;
-
-    return maxBands - 1;
-}
-
-int MultibandGraph::crossoverHandleAt(float x) const
-{
-    const auto graph = graphBounds();
-    const auto crossovers = readCrossoverFrequencies();
-
-    for (int index = 0; index < crossoverCount; ++index)
-    {
-        const auto handleX = frequencyToX(crossovers[static_cast<size_t>(index)], graph);
-        if (std::abs(x - handleX) <= 8.0f)
-            return index;
-    }
-
-    return -1;
+    return getLocalBounds().toFloat().reduced(18.0f, 14.0f);
 }
 
 void MultibandGraph::setSelectedBand(int zeroBasedIndex)
 {
-    const auto clamped = juce::jlimit(0, maxBands - 1, zeroBasedIndex);
+    const auto clamped = zeroBasedIndex < 0 ? -1 : juce::jlimit(0, maxBands - 1, zeroBasedIndex);
     if (selectedBand == clamped)
         return;
 
+    endDragGesture();
     selectedBand = clamped;
-    if (onSelectedBandChanged != nullptr)
+    if (onSelectedBandChanged)
         onSelectedBandChanged(selectedBand);
     repaint();
+}
+
+void MultibandGraph::beginDragGesture()
+{
+    endDragGesture();
+    if (state == nullptr || selectedBand < 0)
+        return;
+
+    const auto id = dragMode == DragMode::centre ? bandFrequencyIds[static_cast<size_t>(selectedBand)]
+                                                 : bandWidthIds[static_cast<size_t>(selectedBand)];
+    draggedParameter = state->getParameter(id);
+    if (draggedParameter != nullptr)
+        draggedParameter->beginChangeGesture();
+}
+
+void MultibandGraph::endDragGesture()
+{
+    if (draggedParameter != nullptr)
+        draggedParameter->endChangeGesture();
+    draggedParameter = nullptr;
+    dragMode = DragMode::none;
 }
 
 void MultibandGraph::updateSpectrum()
@@ -265,7 +387,6 @@ void MultibandGraph::updateSpectrumLane(const std::array<float, MultibandAnalyze
     fft.performFrequencyOnlyForwardTransform(fftData.data());
 
     const auto frameSampleRate = analyzerFrame.sampleRate > 0.0 ? analyzerFrame.sampleRate : 44100.0;
-
     for (int bin = 0; bin < analyzerBinCount; ++bin)
     {
         const auto frequency = analyzerFrequencyForBin(bin);
@@ -283,18 +404,14 @@ void MultibandGraph::drawGrid(juce::Graphics& g, juce::Rectangle<float> graph) c
     }};
 
     for (float frequency = 30.0f; frequency < maxFrequency; frequency *= 10.0f)
-    {
         for (int multiplier = 2; multiplier < 10; ++multiplier)
         {
             const auto value = frequency * static_cast<float>(multiplier);
             if (value > maxFrequency)
                 break;
-
-            const auto x = frequencyToX(value, graph);
             g.setColour(fineGridColour());
-            g.drawVerticalLine(static_cast<int>(std::round(x)), graph.getY(), graph.getBottom());
+            g.drawVerticalLine(static_cast<int>(std::round(frequencyToX(value, graph))), graph.getY(), graph.getBottom());
         }
-    }
 
     for (const auto frequency : majorFrequencies)
     {
@@ -317,33 +434,36 @@ void MultibandGraph::drawGrid(juce::Graphics& g, juce::Rectangle<float> graph) c
     }
 }
 
-void MultibandGraph::drawBands(juce::Graphics& g, juce::Rectangle<float> graph) const
+void MultibandGraph::drawBands(juce::Graphics& g, juce::Rectangle<float>) const
 {
-    const auto crossovers = readCrossoverFrequencies();
-    auto left = graph.getX();
-
     for (int index = 0; index < maxBands; ++index)
     {
-        const auto right = index < crossoverCount ? frequencyToX(crossovers[static_cast<size_t>(index)], graph) : graph.getRight();
-        const auto enabled = parameterValue(bandEnabledIds[static_cast<size_t>(index)], index < 4 ? 1.0f : 0.0f) >= 0.5f;
-        auto colour = bandColour(index);
+        if (! bandEnabled(index))
+            continue;
 
-        g.setColour(colour.withAlpha(enabled ? (index == selectedBand ? 0.23f : 0.13f) : 0.055f));
-        g.fillRect(juce::Rectangle<float>(left, graph.getY(), right - left, graph.getHeight()));
+        const auto bounds = boundsForBand(index);
+        const auto colour = bandColour(index);
+        const auto selected = index == selectedBand;
+        g.setColour(colour.withAlpha(selected ? 0.24f : 0.12f));
+        g.fillRoundedRectangle(bounds.reduced(1.0f, 2.0f), 6.0f);
+        g.setColour(colour.withAlpha(selected ? 0.95f : 0.52f));
+        g.drawRoundedRectangle(bounds.reduced(1.0f, 2.0f), 6.0f, selected ? 2.0f : 1.0f);
 
-        if (index == selectedBand)
+        const auto centreX = frequencyToX(bandFrequency(index), graphBounds());
+        g.fillEllipse(centreX - 6.0f, graphBounds().getCentreY() - 6.0f, 12.0f, 12.0f);
+        if (selected)
         {
-            g.setColour(colour.withAlpha(0.72f));
-            g.drawRect(juce::Rectangle<float>(left + 1.0f, graph.getY() + 1.0f, right - left - 2.0f, graph.getHeight() - 2.0f), 2.0f);
+            g.fillRoundedRectangle(bounds.getX() - 3.0f, graphBounds().getCentreY() - 14.0f, 6.0f, 28.0f, 2.0f);
+            g.fillRoundedRectangle(bounds.getRight() - 3.0f, graphBounds().getCentreY() - 14.0f, 6.0f, 28.0f, 2.0f);
         }
 
-        g.setColour(colour.withAlpha(enabled ? 0.95f : 0.35f));
-        g.setFont(juce::FontOptions(12.0f, juce::Font::bold));
-        g.drawText(juce::String(index + 1),
-                   juce::Rectangle<float>(left + 6.0f, graph.getY() + 8.0f, 24.0f, 18.0f).toNearestInt(),
-                   juce::Justification::centredLeft);
-
-        left = right;
+        if (bounds.getWidth() >= 48.0f)
+        {
+            g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+            g.drawText(juce::String(index + 1) + "  " + frequencyLabel(bandFrequency(index)) + " Hz",
+                       juce::Rectangle<float>(bounds.getX() + 6.0f, bounds.getY() + 8.0f, bounds.getWidth() - 12.0f, 18.0f).toNearestInt(),
+                       juce::Justification::centred);
+        }
     }
 }
 
@@ -353,13 +473,10 @@ void MultibandGraph::drawSpectrum(juce::Graphics& g,
                                   juce::Colour colour) const
 {
     juce::Path path;
-
     for (int bin = 0; bin < analyzerBinCount; ++bin)
     {
-        const auto frequency = analyzerFrequencyForBin(bin);
-        const auto x = frequencyToX(frequency, graph);
+        const auto x = frequencyToX(analyzerFrequencyForBin(bin), graph);
         const auto y = juce::jmap(juce::jlimit(-96.0f, 12.0f, values[static_cast<size_t>(bin)]), -96.0f, 12.0f, graph.getBottom(), graph.getY());
-
         if (bin == 0)
             path.startNewSubPath(x, y);
         else
@@ -372,20 +489,19 @@ void MultibandGraph::drawSpectrum(juce::Graphics& g,
 
 void MultibandGraph::drawDynamics(juce::Graphics& g, juce::Rectangle<float> graph) const
 {
-    const auto crossovers = readCrossoverFrequencies();
-    auto left = graph.getX();
-
     for (int index = 0; index < maxBands; ++index)
     {
-        const auto right = index < crossoverCount ? frequencyToX(crossovers[static_cast<size_t>(index)], graph) : graph.getRight();
+        if (! bandEnabled(index))
+            continue;
+
+        const auto bounds = boundsForBand(index).reduced(4.0f, 0.0f);
         const auto movement = analyzerFrame.dynamicGainDb[static_cast<size_t>(index)];
         const auto height = juce::jlimit(-24.0f, 24.0f, movement) / 24.0f * (graph.getHeight() * 0.42f);
         const auto centre = graph.getCentreY();
         const auto rect = height >= 0.0f
-                              ? juce::Rectangle<float>(left + 3.0f, centre - height, right - left - 6.0f, height)
-                              : juce::Rectangle<float>(left + 3.0f, centre, right - left - 6.0f, -height);
-
-        g.setColour((height >= 0.0f ? juce::Colour::fromRGB(120, 196, 255) : juce::Colour::fromRGB(255, 198, 74)).withAlpha(0.28f));
+                              ? juce::Rectangle<float>(bounds.getX(), centre - height, bounds.getWidth(), height)
+                              : juce::Rectangle<float>(bounds.getX(), centre, bounds.getWidth(), -height);
+        g.setColour((height >= 0.0f ? juce::Colour::fromRGB(120, 196, 255) : juce::Colour::fromRGB(255, 198, 74)).withAlpha(0.34f));
         g.fillRoundedRectangle(rect, 3.0f);
 
         if (index == selectedBand)
@@ -393,39 +509,51 @@ void MultibandGraph::drawDynamics(juce::Graphics& g, juce::Rectangle<float> grap
             g.setColour(accentColour());
             g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
             g.drawText((movement > 0.0f ? "+" : "") + juce::String(movement, 1) + " dB",
-                       juce::Rectangle<float>(left + 8.0f, graph.getBottom() - 38.0f, right - left - 16.0f, 18.0f).toNearestInt(),
+                       juce::Rectangle<float>(bounds.getX(), graph.getBottom() - 38.0f, bounds.getWidth(), 18.0f).toNearestInt(),
                        juce::Justification::centred);
         }
-
-        left = right;
     }
-}
-
-void MultibandGraph::setCrossoverFrequency(int crossoverIndex, float frequency)
-{
-    if (state == nullptr || crossoverIndex < 0 || crossoverIndex >= crossoverCount)
-        return;
-
-    const auto crossovers = readCrossoverFrequencies();
-    const auto lowLimit = crossoverIndex == 0 ? minFrequency + minimumCrossoverGap
-                                              : crossovers[static_cast<size_t>(crossoverIndex - 1)] + minimumCrossoverGap;
-    const auto highLimit = crossoverIndex == crossoverCount - 1 ? maxFrequency - minimumCrossoverGap
-                                                                : crossovers[static_cast<size_t>(crossoverIndex + 1)] - minimumCrossoverGap;
-    const auto clamped = juce::jlimit(lowLimit, juce::jmax(lowLimit, highLimit), frequency);
-
-    if (auto* parameter = state->getParameter(crossoverFrequencyIds[static_cast<size_t>(crossoverIndex)]))
-        parameter->setValueNotifyingHost(parameter->convertTo0to1(clamped));
 }
 
 float MultibandGraph::parameterValue(const juce::String& id, float fallback) const
 {
-    if (state == nullptr)
-        return fallback;
-
-    if (auto* value = state->getRawParameterValue(id))
-        return value->load();
-
+    if (state != nullptr)
+        if (auto* value = state->getRawParameterValue(id))
+            return value->load();
     return fallback;
+}
+
+void MultibandGraph::setParameterValue(const juce::String& id, float plainValue)
+{
+    if (state == nullptr)
+        return;
+    if (auto* parameter = state->getParameter(id))
+    {
+        const auto normalized = parameter->convertTo0to1(plainValue);
+        if (std::abs(parameter->getValue() - normalized) < 1.0e-6f)
+            return;
+        if (parameter != draggedParameter)
+            parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost(normalized);
+        if (parameter != draggedParameter)
+            parameter->endChangeGesture();
+    }
+}
+
+bool MultibandGraph::bandEnabled(int zeroBasedIndex) const
+{
+    return zeroBasedIndex >= 0 && zeroBasedIndex < maxBands
+           && parameterValue(bandEnabledIds[static_cast<size_t>(zeroBasedIndex)], 0.0f) >= 0.5f;
+}
+
+float MultibandGraph::bandFrequency(int zeroBasedIndex) const
+{
+    return parameterValue(bandFrequencyIds[static_cast<size_t>(zeroBasedIndex)], defaultBandFrequencies[static_cast<size_t>(zeroBasedIndex)]);
+}
+
+float MultibandGraph::bandWidth(int zeroBasedIndex) const
+{
+    return parameterValue(bandWidthIds[static_cast<size_t>(zeroBasedIndex)], defaultWidthOctaves);
 }
 
 float MultibandGraph::frequencyToX(float frequency, juce::Rectangle<float> bounds)
@@ -441,18 +569,12 @@ float MultibandGraph::frequencyToX(float frequency, juce::Rectangle<float> bound
 float MultibandGraph::xToFrequency(float x, juce::Rectangle<float> bounds)
 {
     const auto proportion = juce::jlimit(0.0f, 1.0f, (x - bounds.getX()) / juce::jmax(1.0f, bounds.getWidth()));
-    return std::pow(10.0f,
-                    juce::jmap(proportion,
-                               std::log10(minFrequency),
-                               std::log10(maxFrequency)));
+    return std::pow(10.0f, juce::jmap(proportion, std::log10(minFrequency), std::log10(maxFrequency)));
 }
 
 float MultibandGraph::analyzerFrequencyForBin(int binIndex)
 {
     const auto proportion = static_cast<float>(binIndex) / static_cast<float>(analyzerBinCount - 1);
-    return std::pow(10.0f,
-                    juce::jmap(proportion,
-                               std::log10(minFrequency),
-                               std::log10(maxFrequency)));
+    return std::pow(10.0f, juce::jmap(proportion, std::log10(minFrequency), std::log10(maxFrequency)));
 }
 }

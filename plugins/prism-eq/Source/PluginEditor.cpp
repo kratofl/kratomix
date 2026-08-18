@@ -46,9 +46,6 @@ PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& 
       outputMeter([this] { return pluginProcessor.getOutputLevel(); }),
       bypassAttachment(pluginProcessor.parameters, "bypass", bypassButton),
       outputAttachment(pluginProcessor.parameters, "outputGain", outputSlider),
-      analyzerModeAttachment(pluginProcessor.parameters, "analyzerMode", analyzerModeBox),
-      phaseModeAttachment(pluginProcessor.parameters, "phaseMode", phaseModeBox),
-      qualityModeAttachment(pluginProcessor.parameters, "qualityMode", qualityModeBox),
       analyzerSpeedAttachment(pluginProcessor.parameters, "analyzerSpeed", analyzerSpeedSlider),
       analyzerRangeAttachment(pluginProcessor.parameters, "analyzerRange", analyzerRangeSlider),
       gainScaleAttachment(pluginProcessor.parameters, "gainScale", gainScaleSlider)
@@ -76,24 +73,30 @@ PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& 
     addAndMakeVisible(analyzerLabel);
 
     analyzerModeBox.addItemList(prism::analyzerModeChoices(), 1);
+    analyzerModeBox.setComponentID("prismAnalyzerMode");
     styleComboBox(analyzerModeBox);
     addAndMakeVisible(analyzerModeBox);
+    analyzerModeAttachment = std::make_unique<ComboBoxAttachment>(pluginProcessor.parameters, "analyzerMode", analyzerModeBox);
 
     phaseLabel.setText("PHASE", juce::dontSendNotification);
     styleCaption(phaseLabel);
     addAndMakeVisible(phaseLabel);
 
     phaseModeBox.addItemList(prism::phaseModeChoices(), 1);
+    phaseModeBox.setComponentID("prismPhaseMode");
     styleComboBox(phaseModeBox);
     addAndMakeVisible(phaseModeBox);
+    phaseModeAttachment = std::make_unique<ComboBoxAttachment>(pluginProcessor.parameters, "phaseMode", phaseModeBox);
 
     qualityLabel.setText("QUALITY", juce::dontSendNotification);
     styleCaption(qualityLabel);
     addAndMakeVisible(qualityLabel);
 
     qualityModeBox.addItemList(prism::qualityModeChoices(), 1);
+    qualityModeBox.setComponentID("prismQualityMode");
     styleComboBox(qualityModeBox);
     addAndMakeVisible(qualityModeBox);
+    qualityModeAttachment = std::make_unique<ComboBoxAttachment>(pluginProcessor.parameters, "qualityMode", qualityModeBox);
 
     liveLabel.setText("LIVE", juce::dontSendNotification);
     styleCaption(liveLabel);
@@ -146,6 +149,7 @@ PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& 
         addAndMakeVisible(*slider);
     }
 
+    graph.setComponentID("prismGraph");
     graph.attachState(pluginProcessor.parameters);
     graph.attachAnalyzerReader([this](PrismAnalyzerFrame& frame)
     {
@@ -187,7 +191,7 @@ PrismEqAudioProcessorEditor::PrismEqAudioProcessorEditor(PrismEqAudioProcessor& 
     addAndMakeVisible(outputMeter);
 
     configureBandControls();
-    rebuildBandAttachments(0);
+    rebuildBandAttachments(graph.getSelectedBand());
 
     setSize(editorWidth, editorHeight);
     startTimerHz(20);
@@ -271,7 +275,7 @@ void PrismEqAudioProcessorEditor::resized()
 
     bandPanel.setBounds(bandArea.reduced(0, 2));
 
-    auto panelBounds = bandPanel.getLocalBounds().reduced(12, 10);
+    auto panelBounds = bandPanel.getLocalBounds().reduced(12, 8);
     auto left = panelBounds.removeFromLeft(118);
     bandLabel.setBounds(left.removeFromTop(22));
     dynamicModeLabel.setBounds(left.removeFromTop(18));
@@ -281,8 +285,9 @@ void PrismEqAudioProcessorEditor::resized()
     auto typeArea = panelBounds.removeFromLeft(120);
     typeLabel.setBounds(typeArea.removeFromTop(18));
     bandTypeBox.setBounds(typeArea.removeFromTop(28));
-    sourceLabel.setBounds(typeArea.removeFromTop(20).translated(0, 8));
-    sidechainSourceBox.setBounds(typeArea.removeFromTop(28).translated(0, 8));
+    typeArea.removeFromTop(6);
+    sourceLabel.setBounds(typeArea.removeFromTop(18));
+    sidechainSourceBox.setBounds(typeArea.removeFromTop(28));
 
     const auto sliderWidth = juce::jmax(82, panelBounds.getWidth() / 7);
     auto placeSlider = [sliderWidth](juce::Rectangle<int>& area, juce::Label& label, juce::Slider& slider)
@@ -303,6 +308,7 @@ void PrismEqAudioProcessorEditor::resized()
 
 void PrismEqAudioProcessorEditor::configureBandControls()
 {
+    bandPanel.setComponentID("prismBandPanel");
     addAndMakeVisible(bandPanel);
 
     bandLabel.setText("Band --", juce::dontSendNotification);
@@ -330,8 +336,10 @@ void PrismEqAudioProcessorEditor::configureBandControls()
 
     bandTypeBox.addItemList(prism::bandTypeChoices(), 1);
     sidechainSourceBox.addItemList(prism::sidechainSourceChoices(), 1);
+    sidechainSourceBox.setComponentID("prismSidechainSource");
     dynamicModeBox.addItem("Static", 1);
     dynamicModeBox.addItem("Dynamic", 2);
+    dynamicModeBox.setComponentID("prismDynamicMode");
 
     for (auto* box : { &bandTypeBox, &sidechainSourceBox, &dynamicModeBox })
     {

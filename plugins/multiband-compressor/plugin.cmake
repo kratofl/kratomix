@@ -4,7 +4,7 @@ set(KRATOMIX_PRODUCT_NAME "Kratomix Multiband Compressor")
 set(KRATOMIX_BUNDLE_ID "com.kratomix.multibandcompressor")
 set(KRATOMIX_PLUGIN_MANUFACTURER_CODE "Kmix")
 set(KRATOMIX_PLUGIN_CODE "KMBC")
-set(KRATOMIX_AU_MAIN_TYPE "audyn")
+set(KRATOMIX_AU_MAIN_TYPE "aufx")
 set(KRATOMIX_PLUGIN_FORMATS
     AU
     VST3

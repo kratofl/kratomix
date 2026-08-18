@@ -9,23 +9,28 @@
 
 namespace kratomix
 {
-class MultibandSplitter
+class MultibandBandFilter
 {
 public:
     void prepare(const juce::dsp::ProcessSpec& spec);
     void reset();
-    void setCrossovers(const std::array<float, multiband::crossoverCount>& frequencies);
-    void split(const juce::AudioBuffer<float>& source,
-               std::array<juce::AudioBuffer<float>, multiband::maxBands>& destination,
-               int numChannels,
-               int numSamples) noexcept;
+    void setBand(float centreFrequency, float widthOctaves, double sampleRate);
+    void process(const juce::AudioBuffer<float>& source,
+                 juce::AudioBuffer<float>& destination,
+                 int numChannels,
+                 int numSamples) noexcept;
 
 private:
-    using Filter = juce::dsp::LinkwitzRileyFilter<float>;
+    using Filter = juce::dsp::StateVariableTPTFilter<float>;
 
-    std::array<Filter, multiband::crossoverCount> lowpassFilters;
-    std::array<Filter, multiband::crossoverCount> highpassFilters;
-    std::array<std::array<Filter, multiband::crossoverCount>, multiband::maxBands> allpassFilters;
+    void updateCutoffs(float centreFrequency, float widthOctaves);
+
+    Filter highpass;
+    Filter lowpass;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> centreSmoother;
+    juce::SmoothedValue<float> widthSmoother;
+    double processingSampleRate = 44100.0;
+    int samplesUntilCutoffUpdate = 0;
 };
 
 class MultibandProcessor
@@ -48,7 +53,7 @@ private:
 
     void allocateBuffers(int numChannels, int numSamples);
     void applyTargetsImmediately();
-    void updateCrossovers();
+    void updateBandFilters();
     void processLookahead(juce::AudioBuffer<float>& audioBuffer, int numChannels, int numSamples);
     float detectorMagnitudeForBand(int bandIndex,
                                    int sample,
@@ -74,9 +79,9 @@ private:
     std::array<juce::AudioBuffer<float>, multiband::maxBands> audioBands;
     std::array<juce::AudioBuffer<float>, multiband::maxBands> detectorBands;
     std::array<juce::AudioBuffer<float>, multiband::maxBands> sidechainBands;
-    MultibandSplitter audioSplitter;
-    MultibandSplitter detectorSplitter;
-    MultibandSplitter sidechainSplitter;
+    std::array<MultibandBandFilter, multiband::maxBands> audioFilters;
+    std::array<MultibandBandFilter, multiband::maxBands> detectorFilters;
+    std::array<MultibandBandFilter, multiband::maxBands> sidechainFilters;
 
     AnalyzerStorage inputAnalyzerSamples;
     AnalyzerStorage outputAnalyzerSamples;
@@ -89,7 +94,6 @@ private:
     std::atomic<float> outputLevel { 0.0f };
     std::atomic<int> currentLatencySamples { 0 };
 
-    std::array<float, multiband::crossoverCount> activeCrossovers = multiband::defaultCrossoverFrequencies;
     std::array<float, multiband::maxBands> detectorEnvelope {};
     std::array<float, multiband::maxBands> gainDbState {};
     std::array<float, multiband::maxBands> bandEnergyState {};

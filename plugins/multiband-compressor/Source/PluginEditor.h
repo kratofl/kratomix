@@ -64,6 +64,8 @@ private:
     juce::Label bandLabel;
     juce::Label modeLabel;
     juce::Label detectorLabel;
+    juce::Label frequencyLabel;
+    juce::Label widthLabel;
     juce::Label thresholdLabel;
     juce::Label rangeLabel;
     juce::Label ratioLabel;
@@ -74,6 +76,8 @@ private:
     juce::Label stereoLinkLabel;
     juce::ComboBox modeBox;
     juce::ComboBox detectorBox;
+    juce::Slider frequencySlider;
+    juce::Slider widthSlider;
     juce::Slider thresholdSlider;
     juce::Slider rangeSlider;
     juce::Slider ratioSlider;
@@ -82,12 +86,14 @@ private:
     juce::Slider kneeSlider;
     juce::Slider makeupSlider;
     juce::Slider stereoLinkSlider;
-    juce::ToggleButton enabledButton { "IN" };
+    juce::TextButton deleteButton { "DEL" };
     juce::ToggleButton soloButton { "SOLO" };
     juce::ToggleButton auditionButton { "AUDITION" };
 
     std::unique_ptr<ComboBoxAttachment> modeAttachment;
     std::unique_ptr<ComboBoxAttachment> detectorAttachment;
+    std::unique_ptr<SliderAttachment> frequencyAttachment;
+    std::unique_ptr<SliderAttachment> widthAttachment;
     std::unique_ptr<SliderAttachment> thresholdAttachment;
     std::unique_ptr<SliderAttachment> rangeAttachment;
     std::unique_ptr<SliderAttachment> ratioAttachment;
@@ -96,7 +102,6 @@ private:
     std::unique_ptr<SliderAttachment> kneeAttachment;
     std::unique_ptr<SliderAttachment> makeupAttachment;
     std::unique_ptr<SliderAttachment> stereoLinkAttachment;
-    std::unique_ptr<ButtonAttachment> enabledAttachment;
     std::unique_ptr<ButtonAttachment> soloAttachment;
     std::unique_ptr<ButtonAttachment> auditionAttachment;
 

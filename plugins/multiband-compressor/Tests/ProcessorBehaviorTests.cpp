@@ -104,6 +104,8 @@ int main()
     for (int index = 0; index < kratomix::multiband::maxBands; ++index)
     {
         const auto idx = static_cast<size_t>(index);
+        expectParameter(processor.parameters, kratomix::multiband::bandFrequencyIds[idx], failures);
+        expectParameter(processor.parameters, kratomix::multiband::bandWidthIds[idx], failures);
         expectParameter(processor.parameters, kratomix::multiband::bandEnabledIds[idx], failures);
         expectParameter(processor.parameters, kratomix::multiband::bandThresholdIds[idx], failures);
         expectParameter(processor.parameters, kratomix::multiband::bandRangeIds[idx], failures);
@@ -118,7 +120,7 @@ int main()
     }
 
     if (auto* band01Enabled = processor.parameters.getRawParameterValue(kratomix::multiband::bandEnabledIds[0]))
-        expect(band01Enabled->load() >= 0.5f, "Band 1 should be enabled by default", failures);
+        expect(band01Enabled->load() < 0.5f, "A new instance should start without processing bands", failures);
     if (auto* band05Enabled = processor.parameters.getRawParameterValue(kratomix::multiband::bandEnabledIds[4]))
         expect(band05Enabled->load() < 0.5f, "Band 5 should be reserved but disabled by default", failures);
 
@@ -136,12 +138,16 @@ int main()
         dsp.updateSettings(settings);
 
         auto buffer = makeSineBuffer(2, 4096, 1000.0f, spec.sampleRate, 0.25f);
+        const auto original = buffer;
         const auto dryRms = rmsLevel(buffer, 2048);
         dsp.process(buffer);
         const auto wetRms = rmsLevel(buffer, 2048);
 
         expect(std::abs(juce::Decibels::gainToDecibels(wetRms / dryRms, -120.0f)) < 1.0f,
-               "Neutral fixed crossover should preserve steady sine level within 1 dB",
+               "An instance without active bands should preserve steady sine level within 1 dB",
+               failures);
+        expect(buffersAlmostEqual(buffer, original, 1.0e-6f),
+               "Inactive free bands should leave every sample unchanged",
                failures);
     }
 
@@ -176,6 +182,8 @@ int main()
             band.enabled = false;
         auto& band = settings.bands[2];
         band.enabled = true;
+        band.frequencyHz = 1000.0f;
+        band.widthOctaves = 1.5f;
         band.thresholdDb = -42.0f;
         band.rangeDb = -12.0f;
         band.ratio = 8.0f;
@@ -195,6 +203,21 @@ int main()
         expect(rmsLevel(processed) < rmsLevel(dry) * 0.88f,
                "Compression should reduce a band above threshold",
                failures);
+
+        dsp.reset();
+        dsp.updateSettings(settings);
+        auto lowDry = makeSineBuffer(2, 512, 100.0f, spec.sampleRate, 0.35f);
+        auto lowProcessed = lowDry;
+        for (int block = 0; block < 16; ++block)
+        {
+            lowProcessed = makeSineBuffer(2, 512, 100.0f, spec.sampleRate, 0.35f);
+            dsp.process(lowProcessed);
+        }
+
+        const auto lowDifferenceDb = juce::Decibels::gainToDecibels(rmsLevel(lowProcessed) / rmsLevel(lowDry), -120.0f);
+        expect(std::abs(lowDifferenceDb) < 1.0f,
+               "Compression around 1 kHz should leave a 100 Hz tone essentially untouched",
+               failures);
     }
 
     {
@@ -210,6 +233,8 @@ int main()
             band.enabled = false;
         auto& band = settings.bands[2];
         band.enabled = true;
+        band.frequencyHz = 1000.0f;
+        band.widthOctaves = 1.5f;
         band.mode = kratomix::multiband::BandMode::expand;
         band.thresholdDb = -20.0f;
         band.rangeDb = 10.0f;
@@ -245,6 +270,8 @@ int main()
             band.enabled = false;
         auto& band = settings.bands[2];
         band.enabled = true;
+        band.frequencyHz = 1000.0f;
+        band.widthOctaves = 1.5f;
         band.detectorSource = kratomix::multiband::DetectorSource::external;
         band.thresholdDb = -40.0f;
         band.rangeDb = -12.0f;
@@ -297,6 +324,114 @@ int main()
                failures);
         expect(editor != nullptr && findChildComponentWithId(*editor, "threshold") != nullptr,
                "Editor should expose the selected-band threshold control",
+               failures);
+        auto* frequencyControl = editor != nullptr ? findChildComponentWithId(*editor, "frequency") : nullptr;
+        expect(frequencyControl != nullptr && ! frequencyControl->isEnabled(),
+               "Band controls should wait for the user to create or select a band",
+               failures);
+    }
+
+    {
+        kratomix::MultibandCompressorAudioProcessor graphProcessor;
+        kratomix::multiband::MultibandGraph graph;
+        graph.attachState(graphProcessor.parameters);
+        graph.setBounds(0, 0, 900, 420);
+
+        expect(graph.getSelectedBand() < 0,
+               "An empty graph should start without a selected band",
+               failures);
+        expect(graph.createBandAt({ 450.0f, 210.0f }),
+               "Double-click workflow should be able to create a free dynamic band",
+               failures);
+        expect(graph.getSelectedBand() == 0,
+               "A newly created band should be selected",
+               failures);
+        expect(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandEnabledIds[0])->load() >= 0.5f,
+               "Creating a graph band should enable an available band slot",
+               failures);
+
+        graph.setSelectedBandFrequency(2400.0f);
+        graph.setSelectedBandWidth(1.25f);
+        expect(std::abs(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandFrequencyIds[0])->load() - 2400.0f) < 2.0f,
+               "Dragging a free band should update its centre frequency",
+               failures);
+        expect(std::abs(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandWidthIds[0])->load() - 1.25f) < 0.02f,
+               "Band edge dragging or wheel input should update band width",
+               failures);
+        expect(graph.boundsForBand(0).getWidth() > 20.0f,
+               "A free band should expose a visible frequency range",
+               failures);
+        expect(graph.createBandAt({ 680.0f, 210.0f }) && graph.getSelectedBand() == 1,
+               "Additional dynamic bands should be created in the next free slot",
+               failures);
+        expect(graph.deleteSelectedBand(),
+               "The selected dynamic band should be removable",
+               failures);
+    }
+
+    {
+        kratomix::MultibandCompressorAudioProcessor sourceProcessor;
+        setParameter(sourceProcessor.parameters, kratomix::multiband::bandEnabledIds[0], 1.0f);
+        setParameter(sourceProcessor.parameters, kratomix::multiband::bandFrequencyIds[0], 3210.0f);
+        setParameter(sourceProcessor.parameters, kratomix::multiband::bandWidthIds[0], 1.75f);
+        setParameter(sourceProcessor.parameters, kratomix::multiband::bandThresholdIds[0], -31.0f);
+
+        juce::MemoryBlock savedState;
+        sourceProcessor.getStateInformation(savedState);
+
+        kratomix::MultibandCompressorAudioProcessor restoredProcessor;
+        restoredProcessor.setStateInformation(savedState.getData(), static_cast<int>(savedState.getSize()));
+        std::unique_ptr<juce::AudioProcessorEditor> restoredEditor(restoredProcessor.createEditor());
+        auto* frequency = dynamic_cast<juce::Slider*>(findChildComponentWithId(*restoredEditor, "frequency"));
+        auto* width = dynamic_cast<juce::Slider*>(findChildComponentWithId(*restoredEditor, "width"));
+
+        expect(std::abs(restoredProcessor.parameters.getRawParameterValue(kratomix::multiband::bandFrequencyIds[0])->load() - 3210.0f) < 2.0f,
+               "Free-band centre frequency should survive state restoration",
+               failures);
+        expect(frequency != nullptr && frequency->isEnabled() && std::abs(frequency->getValue() - 3210.0) < 2.0,
+               "Reopened editor should select the restored active band and show its frequency",
+               failures);
+        expect(width != nullptr && width->isEnabled() && std::abs(width->getValue() - 1.75) < 0.02,
+               "Reopened editor should show the restored band width",
+               failures);
+        expect(frequency != nullptr && frequency->getParentComponent() != nullptr
+                   && frequency->getParentComponent()->getLocalBounds().contains(frequency->getBounds()),
+               "Frequency control should fit inside the selected-band panel",
+               failures);
+        expect(width != nullptr && width->getParentComponent() != nullptr
+                   && width->getParentComponent()->getLocalBounds().contains(width->getBounds()),
+               "Width control should fit inside the selected-band panel",
+               failures);
+    }
+
+    {
+        kratomix::MultibandCompressorAudioProcessor legacySource;
+        setParameter(legacySource.parameters, kratomix::multiband::crossoverFrequencyIds[0], 200.0f);
+        setParameter(legacySource.parameters, kratomix::multiband::bandEnabledIds[0], 1.0f);
+        auto legacyState = legacySource.parameters.copyState();
+
+        for (int childIndex = legacyState.getNumChildren() - 1; childIndex >= 0; --childIndex)
+        {
+            const auto child = legacyState.getChild(childIndex);
+            const auto id = child.getProperty("id").toString();
+            if (id.startsWith("band") && (id.endsWith("Frequency") || id.endsWith("Width")))
+                legacyState.removeChild(childIndex, nullptr);
+        }
+
+        juce::MemoryBlock legacyData;
+        std::unique_ptr<juce::XmlElement> legacyXml(legacyState.createXml());
+        juce::AudioProcessor::copyXmlToBinary(*legacyXml, legacyData);
+
+        kratomix::MultibandCompressorAudioProcessor migratedProcessor;
+        migratedProcessor.setStateInformation(legacyData.getData(), static_cast<int>(legacyData.getSize()));
+        const auto migratedFrequency = migratedProcessor.parameters.getRawParameterValue(kratomix::multiband::bandFrequencyIds[0])->load();
+        const auto migratedWidth = migratedProcessor.parameters.getRawParameterValue(kratomix::multiband::bandWidthIds[0])->load();
+
+        expect(std::abs(migratedFrequency - std::sqrt(20.0f * 200.0f)) < 2.0f,
+               "Legacy crossover state should migrate to a free-band centre frequency",
+               failures);
+        expect(std::abs(migratedWidth - std::log2(200.0f / 20.0f)) < 0.03f,
+               "Legacy crossover state should migrate to a free-band octave width",
                failures);
     }
 
