@@ -25,6 +25,12 @@ void expectParameter(juce::AudioProcessorValueTreeState& state, const juce::Stri
     expect(state.getParameter(id) != nullptr, "Missing parameter: " + id, failures);
 }
 
+void setParameter(juce::AudioProcessorValueTreeState& state, const juce::String& id, float plainValue)
+{
+    if (auto* parameter = state.getParameter(id))
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(plainValue));
+}
+
 void expectFiniteResponse(const kratomix::PrismIIRCoefficients& coefficients,
                           double sampleRate,
                           const juce::String& label,
@@ -329,6 +335,52 @@ int main()
         expect(findChildComponentWithId(*editor, "prismAutoRefineButton") != nullptr,
                "Prism editor should expose the input Auto Refine action",
                failures);
+
+    {
+        kratomix::PrismEqAudioProcessor sourceProcessor;
+        setParameter(sourceProcessor.parameters, "analyzerMode", 5.0f);
+        setParameter(sourceProcessor.parameters, "phaseMode", 2.0f);
+        setParameter(sourceProcessor.parameters, "band01Enabled", 1.0f);
+        setParameter(sourceProcessor.parameters, "band01DynamicEnabled", 1.0f);
+        setParameter(sourceProcessor.parameters, "band01SidechainSource", 1.0f);
+
+        juce::MemoryBlock savedState;
+        sourceProcessor.getStateInformation(savedState);
+
+        kratomix::PrismEqAudioProcessor restoredProcessor;
+        restoredProcessor.setStateInformation(savedState.getData(), static_cast<int>(savedState.getSize()));
+
+        expect(std::abs(restoredProcessor.parameters.getRawParameterValue("analyzerMode")->load() - 5.0f) < 1.0e-6f,
+               "Analyzer view choice should survive state restoration",
+               failures);
+        expect(std::abs(restoredProcessor.parameters.getRawParameterValue("phaseMode")->load() - 2.0f) < 1.0e-6f,
+               "Phase choice should survive state restoration",
+               failures);
+        expect(std::abs(restoredProcessor.parameters.getRawParameterValue("band01SidechainSource")->load() - 1.0f) < 1.0e-6f,
+               "Dynamic EQ sidechain choice should survive state restoration",
+               failures);
+
+        std::unique_ptr<juce::AudioProcessorEditor> restoredEditor(restoredProcessor.createEditor());
+        auto* analyzerMode = dynamic_cast<juce::ComboBox*>(findChildComponentWithId(*restoredEditor, "prismAnalyzerMode"));
+        auto* phaseMode = dynamic_cast<juce::ComboBox*>(findChildComponentWithId(*restoredEditor, "prismPhaseMode"));
+        auto* sidechainSource = dynamic_cast<juce::ComboBox*>(findChildComponentWithId(*restoredEditor, "prismSidechainSource"));
+
+        expect(analyzerMode != nullptr && analyzerMode->getSelectedId() == 6,
+               "Restored editor should display the saved analyzer view",
+               failures);
+        expect(phaseMode != nullptr && phaseMode->getSelectedId() == 3,
+               "Restored editor should display the saved phase mode",
+               failures);
+        expect(sidechainSource != nullptr && sidechainSource->isVisible() && sidechainSource->isEnabled(),
+               "Restored dynamic band should expose an enabled sidechain dropdown",
+               failures);
+        expect(sidechainSource != nullptr && sidechainSource->getSelectedId() == 2,
+               "Restored dynamic band should display the saved sidechain source",
+               failures);
+        expect(sidechainSource != nullptr && sidechainSource->getHeight() >= 24,
+               "Dynamic EQ sidechain dropdown should not be clipped by the band panel",
+               failures);
+    }
 
     {
         kratomix::prism::PrismGraph graph;

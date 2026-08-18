@@ -73,6 +73,25 @@ bool buffersAlmostEqual(const juce::AudioBuffer<float>& lhs,
     return true;
 }
 
+float maxAbsoluteDifference(const juce::AudioBuffer<float>& lhs,
+                            const juce::AudioBuffer<float>& rhs)
+{
+    auto maxDifference = 0.0f;
+    const auto channels = std::min(lhs.getNumChannels(), rhs.getNumChannels());
+    const auto samples = std::min(lhs.getNumSamples(), rhs.getNumSamples());
+
+    for (int channel = 0; channel < channels; ++channel)
+    {
+        const auto* left = lhs.getReadPointer(channel);
+        const auto* right = rhs.getReadPointer(channel);
+
+        for (int sample = 0; sample < samples; ++sample)
+            maxDifference = std::max(maxDifference, std::abs(left[sample] - right[sample]));
+    }
+
+    return maxDifference;
+}
+
 juce::AudioBuffer<float> makeSineBuffer(int numChannels, int numSamples)
 {
     juce::AudioBuffer<float> buffer(numChannels, numSamples);
@@ -108,6 +127,24 @@ int main()
 
         expect(state.getParameter("bypass") != nullptr,
                "Parameter layout should expose a bypass parameter",
+               failures);
+
+        const auto hasContinuousRange = [&state](const char* parameterId)
+        {
+            if (auto* parameter = state.getParameter(parameterId))
+                return parameter->getNormalisableRange().interval == 0.0f;
+
+            return false;
+        };
+
+        expect(hasContinuousRange(kratomix::ParamID::drive),
+               "Drive parameter should be continuous",
+               failures);
+        expect(hasContinuousRange(kratomix::ParamID::highPass),
+               "HPF parameter should be continuous",
+               failures);
+        expect(hasContinuousRange(kratomix::ParamID::warmth),
+               "Warmth parameter should be continuous",
                failures);
     }
 
@@ -152,8 +189,8 @@ int main()
         processor.updateSettings(settingsB);
         processor.process(bufferB);
 
-        expect(buffersAlmostEqual(bufferA, bufferB, 1.0e-6f),
-               "Drive values inside one hardware step should render the same output",
+        expect(maxAbsoluteDifference(bufferA, bufferB) > 1.0e-5f,
+               "Nearby drive values should render continuously different output",
                failures);
     }
 
@@ -276,8 +313,14 @@ int main()
                    "HPF textbox should display plain numbers without Hz",
                    failures);
 
-            expect(std::abs(warmth->getValueFromText("2.6") - 3.0) < 1.0e-6,
-                   "Warmth textbox input should accept bare numbers and snap to a step",
+            expect(std::abs(drive->getValueFromText("2.6") - 2.6) < 1.0e-6,
+                   "Drive textbox input should accept bare continuous numbers",
+                   failures);
+            expect(std::abs(warmth->getValueFromText("2.6") - 2.6) < 1.0e-6,
+                   "Warmth textbox input should accept bare continuous numbers",
+                   failures);
+            expect(std::abs(highPass->getValueFromText("35.4") - 35.4) < 1.0e-6,
+                   "HPF textbox input should accept bare continuous numbers",
                    failures);
             expect(std::abs(output->getValueFromText("-4.2") + 4.2) < 1.0e-6,
                    "Output textbox input should accept bare numbers",

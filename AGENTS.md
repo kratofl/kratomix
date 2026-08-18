@@ -49,6 +49,16 @@ Keep all user-facing names, comments, docs, bundle identifiers, and UI text unde
 - Avoid marketing copy inside the plugin UI.
 - Use restrained Kratomix styling and readable labels.
 
+## JUCE State and UI Regression Rules
+
+- Populate every `juce::ComboBox` completely before constructing its `ComboBoxAttachment`. Constructor initializer lists run before the editor constructor body, so do not store a direct attachment member when the box items are added in that body. Use a deferred attachment such as `std::unique_ptr` and create it only after `addItem` or `addItemList` has completed.
+- Treat parameter persistence and visible editor restoration as separate behavior. A correct APVTS value is not sufficient if the reopened control is blank, disabled, or attached to the wrong contextual item.
+- When controls depend on a selected band or other transient editor context, reconstruct a useful context from the restored APVTS state before creating the contextual attachments. For graph editors, select an existing active band on reopen instead of always starting with no selection.
+- For every persisted choice control, add a round-trip regression test that sets a non-default value, calls `getStateInformation`, restores it into a new processor with `setStateInformation`, creates a new editor, and verifies both the raw parameter and the visible control selection.
+- Give critical or dynamically attached controls stable component IDs so tests can find the actual editor components. Tests for regressions involving missing controls must verify visibility, enabled state, selected item, and usable bounds rather than only checking that the editor is constructible.
+- Treat `Rectangle::removeFromTop`, `removeFromLeft`, and similar calls as a strict layout budget. The requested control heights, widths, margins, and spacers must fit within the original rectangle. Do not use `translated` to hide an exhausted rectangle; verify important controls remain inside their parent and keep a usable size. Combo boxes should normally be at least 24 pixels high.
+- When adding or changing an Audio Unit sidechain bus, run `make validate PLUGIN=<slug>` and confirm that validation reports the expected main and sidechain input buses.
+
 ## Build Commands
 
 Standard workflow from the monorepo root:

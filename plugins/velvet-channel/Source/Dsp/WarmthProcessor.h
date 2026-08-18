@@ -7,10 +7,10 @@ namespace kratomix
 struct WarmthSettings
 {
     float inputGainDb = 0.0f;
-    float drive = 2.5f;
+    float drive = 3.0f;
     float highPassHz = 35.0f;
-    float warmthDb = 1.5f;
-    float presenceDb = 0.5f;
+    float warmthDb = 3.0f;
+    float presenceDb = 1.5f;
     float airDb = 1.0f;
     float outputGainDb = 0.0f;
     bool bypassed = false;
@@ -32,7 +32,7 @@ private:
 
     static float saturateSample(float sample, float driveAmount) noexcept;
     void applyTargetsImmediately();
-    void updateFilterCoefficients(float highPassHz, float warmthDb, float presenceDb, float airDb);
+    void updateFilterCoefficients(float highPassHz, float warmthDb, float presenceDb, float airDb, float driveAmount);
 
     StereoFilter highPass;
     StereoFilter lowShelf;
