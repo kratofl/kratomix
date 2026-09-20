@@ -25,7 +25,7 @@ private:
 
     void configureGlobalControls();
     void configureBandControls();
-    void configureRotarySlider(juce::Slider& slider, juce::Label& label, const juce::String& text, double doubleClickValue);
+    void configureValueField(juce::Slider& slider, const juce::String& componentId, double doubleClickValue);
     void configureLinearSlider(juce::Slider& slider, juce::Label& label, const juce::String& text, double doubleClickValue);
     void configureCombo(juce::ComboBox& box, const juce::StringArray& choices);
     void rebuildBandAttachments(int zeroBasedBandIndex);
@@ -63,7 +63,6 @@ private:
     juce::Component bandPanel;
     juce::Label bandLabel;
     juce::Label modeLabel;
-    juce::Label detectorLabel;
     juce::Label frequencyLabel;
     juce::Label widthLabel;
     juce::Label thresholdLabel;
@@ -75,7 +74,6 @@ private:
     juce::Label makeupLabel;
     juce::Label stereoLinkLabel;
     juce::ComboBox modeBox;
-    juce::ComboBox detectorBox;
     juce::Slider frequencySlider;
     juce::Slider widthSlider;
     juce::Slider thresholdSlider;
@@ -91,7 +89,6 @@ private:
     juce::ToggleButton auditionButton { "AUDITION" };
 
     std::unique_ptr<ComboBoxAttachment> modeAttachment;
-    std::unique_ptr<ComboBoxAttachment> detectorAttachment;
     std::unique_ptr<SliderAttachment> frequencyAttachment;
     std::unique_ptr<SliderAttachment> widthAttachment;
     std::unique_ptr<SliderAttachment> thresholdAttachment;

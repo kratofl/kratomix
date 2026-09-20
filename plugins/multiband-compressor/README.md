@@ -1,14 +1,14 @@
 # Kratomix Multiband Compressor
 
-Kratomix Multiband Compressor is a graph-led dynamics processor for shaping up to six freely placed frequency ranges with musical compression, expansion-style range movement, optional external sidechain detection, and Kratomix analyzer feedback. Frequencies outside active bands remain unprocessed.
+Kratomix Multiband Compressor is a graph-led dynamics processor for shaping up to six freely placed frequency ranges with musical compression, expansion-style range movement, and Kratomix analyzer feedback. Frequencies outside active bands remain unprocessed.
 
 ## Controls
 
 - **Input, Output, Mix, Bypass**: global gain staging, wet/dry blend, and output bypass.
 - **Analyzer**: input, output, combined, or gain-reduction graph view.
 - **Lookahead**: off or 5 ms response mode with host latency reporting.
-- **Dynamic bands**: double-click the graph to add a band, drag its centre to choose the frequency, and drag either edge or use the mouse wheel to set its width.
-- **Band controls**: frequency, width, solo, audition, mode, detector source, threshold, range, ratio, attack, release, knee, output, and stereo link.
+- **Dynamic bands**: double-click the graph to add a band. Drag the band point horizontally to set frequency and vertically to set threshold. Drag either edge or use the mouse wheel to set width.
+- **Band controls**: editable value fields for frequency, width, threshold, range, ratio, attack, release, knee, output, and stereo link, plus solo, audition, and mode.
 
 ## UI
 
@@ -28,4 +28,4 @@ make run PLUGIN=multiband-compressor
 make validate PLUGIN=multiband-compressor
 ```
 
-AU validation and host-side sidechain behavior should be confirmed on macOS before release.
+AU validation should be confirmed on macOS before release.

@@ -17,12 +17,6 @@ enum class BandMode
     expand
 };
 
-enum class DetectorSource
-{
-    internal = 0,
-    external
-};
-
 enum class AnalyzerMode
 {
     input = 0,
@@ -117,10 +111,6 @@ inline constexpr std::array<const char*, maxBands> bandModeIds {{
     "band01Mode", "band02Mode", "band03Mode", "band04Mode", "band05Mode", "band06Mode"
 }};
 
-inline constexpr std::array<const char*, maxBands> bandDetectorSourceIds {{
-    "band01DetectorSource", "band02DetectorSource", "band03DetectorSource", "band04DetectorSource", "band05DetectorSource", "band06DetectorSource"
-}};
-
 inline constexpr std::array<const char*, maxBands> bandStereoLinkIds {{
     "band01StereoLink", "band02StereoLink", "band03StereoLink", "band04StereoLink", "band05StereoLink", "band06StereoLink"
 }};
@@ -142,11 +132,6 @@ inline juce::String bandLabel(int zeroBasedIndex)
 inline juce::StringArray bandModeChoices()
 {
     return { "Compress", "Expand" };
-}
-
-inline juce::StringArray detectorSourceChoices()
-{
-    return { "Internal", "External" };
 }
 
 inline juce::StringArray analyzerModeChoices()
@@ -370,12 +355,6 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
             namePrefix + "Mode",
             bandModeChoices(),
             static_cast<int>(BandMode::compress)));
-
-        params.push_back(std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID { bandDetectorSourceIds[static_cast<size_t>(index)], 1 },
-            namePrefix + "Detector",
-            detectorSourceChoices(),
-            static_cast<int>(DetectorSource::internal)));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID { bandStereoLinkIds[static_cast<size_t>(index)], 1 },

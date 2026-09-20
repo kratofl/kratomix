@@ -55,7 +55,7 @@ MultibandGraph::MultibandGraph()
     : fft(fftOrder),
       window(fftSize, juce::dsp::WindowingFunction<float>::hann)
 {
-    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    setMouseCursor(juce::MouseCursor::CrosshairCursor);
     setWantsKeyboardFocus(true);
     inputSpectrum.fill(-100.0f);
     outputSpectrum.fill(-100.0f);
@@ -148,6 +148,7 @@ void MultibandGraph::mouseDoubleClick(const juce::MouseEvent& event)
 
 void MultibandGraph::mouseDown(const juce::MouseEvent& event)
 {
+    endDragGesture();
     grabKeyboardFocus();
     const auto graph = graphBounds();
     if (! graph.contains(event.position))
@@ -159,18 +160,14 @@ void MultibandGraph::mouseDown(const juce::MouseEvent& event)
         return;
     }
 
-    const auto bounds = boundsForBand(selectedBand);
-    const auto centreX = frequencyToX(bandFrequency(selectedBand), graph);
-    if (std::abs(event.position.x - bounds.getX()) <= 8.0f)
-        dragMode = DragMode::leftEdge;
-    else if (std::abs(event.position.x - bounds.getRight()) <= 8.0f)
-        dragMode = DragMode::rightEdge;
-    else
-        dragMode = DragMode::centre;
+    dragMode = dragModeAt(event.position, selectedBand);
+    updateMouseCursor(event.position);
+    if (dragMode == DragMode::none)
+        return;
 
-    if (std::abs(event.position.x - centreX) <= 12.0f)
-        dragMode = DragMode::centre;
-
+    dragStartPosition = event.position;
+    dragStartFrequency = bandFrequency(selectedBand);
+    dragStartThreshold = bandThreshold(selectedBand);
     beginDragGesture();
 }
 
@@ -179,9 +176,19 @@ void MultibandGraph::mouseDrag(const juce::MouseEvent& event)
     if (selectedBand < 0 || dragMode == DragMode::none)
         return;
 
-    if (dragMode == DragMode::centre)
+    if (dragMode == DragMode::body)
     {
-        setSelectedBandFrequency(xToFrequency(event.position.x, graphBounds()));
+        const auto graph = graphBounds();
+        const auto startX = frequencyToX(dragStartFrequency, graph);
+        setSelectedBandFrequency(xToFrequency(startX + event.position.x - dragStartPosition.x, graph));
+        return;
+    }
+
+    if (dragMode == DragMode::threshold)
+    {
+        const auto graph = graphBounds();
+        const auto startY = thresholdToY(dragStartThreshold, graph);
+        setSelectedBandThreshold(yToThreshold(startY + event.position.y - dragStartPosition.y, graph));
         return;
     }
 
@@ -191,20 +198,23 @@ void MultibandGraph::mouseDrag(const juce::MouseEvent& event)
     setSelectedBandWidth(width);
 }
 
-void MultibandGraph::mouseUp(const juce::MouseEvent&)
+void MultibandGraph::mouseUp(const juce::MouseEvent& event)
 {
     endDragGesture();
+    updateMouseCursor(event.position);
 }
 
 void MultibandGraph::mouseMove(const juce::MouseEvent& event)
 {
     hoverPoint = graphBounds().contains(event.position) ? std::optional<juce::Point<float>>(event.position) : std::nullopt;
+    updateMouseCursor(event.position);
     repaint();
 }
 
 void MultibandGraph::mouseExit(const juce::MouseEvent&)
 {
     hoverPoint.reset();
+    setMouseCursor(juce::MouseCursor::NormalCursor);
     repaint();
 }
 
@@ -245,26 +255,11 @@ bool MultibandGraph::createBandAt(juce::Point<float> point)
 
 bool MultibandGraph::selectBandAt(juce::Point<float> point)
 {
-    auto nearestBand = -1;
-    auto nearestDistance = std::numeric_limits<float>::max();
-
-    for (int index = 0; index < maxBands; ++index)
-    {
-        if (! bandEnabled(index) || ! boundsForBand(index).contains(point))
-            continue;
-
-        const auto distance = std::abs(point.x - frequencyToX(bandFrequency(index), graphBounds()));
-        if (distance < nearestDistance)
-        {
-            nearestDistance = distance;
-            nearestBand = index;
-        }
-    }
-
-    if (nearestBand < 0)
+    const auto hitBand = bandAt(point);
+    if (hitBand < 0)
         return false;
 
-    setSelectedBand(nearestBand);
+    setSelectedBand(hitBand);
     return true;
 }
 
@@ -305,6 +300,15 @@ void MultibandGraph::setSelectedBandWidth(float widthOctaves)
     repaint();
 }
 
+void MultibandGraph::setSelectedBandThreshold(float thresholdDb)
+{
+    if (selectedBand < 0)
+        return;
+
+    setParameterValue(bandThresholdIds[static_cast<size_t>(selectedBand)], juce::jlimit(-90.0f, 0.0f, thresholdDb));
+    repaint();
+}
+
 juce::Rectangle<float> MultibandGraph::boundsForBand(int zeroBasedIndex) const
 {
     if (zeroBasedIndex < 0 || zeroBasedIndex >= maxBands)
@@ -318,6 +322,14 @@ juce::Rectangle<float> MultibandGraph::boundsForBand(int zeroBasedIndex) const
     const auto left = frequencyToX(low, graph);
     const auto right = frequencyToX(high, graph);
     return { left, graph.getY(), juce::jmax(2.0f, right - left), graph.getHeight() };
+}
+
+float MultibandGraph::thresholdYForBand(int zeroBasedIndex) const
+{
+    if (zeroBasedIndex < 0 || zeroBasedIndex >= maxBands)
+        return graphBounds().getCentreY();
+
+    return thresholdToY(bandThreshold(zeroBasedIndex), graphBounds());
 }
 
 void MultibandGraph::timerCallback()
@@ -335,6 +347,72 @@ juce::Rectangle<float> MultibandGraph::graphBounds() const
     return getLocalBounds().toFloat().reduced(18.0f, 14.0f);
 }
 
+int MultibandGraph::bandAt(juce::Point<float> point) const
+{
+    auto nearestBand = -1;
+    auto nearestDistance = std::numeric_limits<float>::max();
+
+    for (int index = 0; index < maxBands; ++index)
+    {
+        if (! bandEnabled(index) || ! boundsForBand(index).expanded(8.0f, 0.0f).contains(point))
+            continue;
+
+        const auto distance = std::abs(point.x - frequencyToX(bandFrequency(index), graphBounds()));
+        if (distance < nearestDistance)
+        {
+            nearestDistance = distance;
+            nearestBand = index;
+        }
+    }
+
+    return nearestBand;
+}
+
+MultibandGraph::DragMode MultibandGraph::dragModeAt(juce::Point<float> point, int zeroBasedBandIndex) const
+{
+    if (zeroBasedBandIndex < 0 || ! bandEnabled(zeroBasedBandIndex))
+        return DragMode::none;
+
+    const auto bounds = boundsForBand(zeroBasedBandIndex);
+    const auto centreX = frequencyToX(bandFrequency(zeroBasedBandIndex), graphBounds());
+    const auto thresholdY = thresholdYForBand(zeroBasedBandIndex);
+
+    if (std::abs(point.x - centreX) <= 12.0f && std::abs(point.y - thresholdY) <= 12.0f)
+        return DragMode::threshold;
+
+    if (zeroBasedBandIndex == selectedBand && std::abs(point.y - thresholdY) <= 18.0f)
+    {
+        if (std::abs(point.x - bounds.getX()) <= 8.0f)
+            return DragMode::leftEdge;
+        if (std::abs(point.x - bounds.getRight()) <= 8.0f)
+            return DragMode::rightEdge;
+    }
+
+    return bounds.contains(point) ? DragMode::body : DragMode::none;
+}
+
+void MultibandGraph::updateMouseCursor(juce::Point<float> point)
+{
+    const auto hitBand = bandAt(point);
+    switch (dragModeAt(point, hitBand))
+    {
+        case DragMode::threshold:
+            setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+            break;
+        case DragMode::leftEdge:
+        case DragMode::rightEdge:
+            setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+            break;
+        case DragMode::body:
+            setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+            break;
+        case DragMode::none:
+            setMouseCursor(graphBounds().contains(point) ? juce::MouseCursor::CrosshairCursor
+                                                         : juce::MouseCursor::NormalCursor);
+            break;
+    }
+}
+
 void MultibandGraph::setSelectedBand(int zeroBasedIndex)
 {
     const auto clamped = zeroBasedIndex < 0 ? -1 : juce::jlimit(0, maxBands - 1, zeroBasedIndex);
@@ -350,22 +428,30 @@ void MultibandGraph::setSelectedBand(int zeroBasedIndex)
 
 void MultibandGraph::beginDragGesture()
 {
-    endDragGesture();
     if (state == nullptr || selectedBand < 0)
         return;
 
-    const auto id = dragMode == DragMode::centre ? bandFrequencyIds[static_cast<size_t>(selectedBand)]
-                                                 : bandWidthIds[static_cast<size_t>(selectedBand)];
-    draggedParameter = state->getParameter(id);
-    if (draggedParameter != nullptr)
-        draggedParameter->beginChangeGesture();
+    const auto index = static_cast<size_t>(selectedBand);
+    if (dragMode == DragMode::body)
+        draggedParameters[0] = state->getParameter(bandFrequencyIds[index]);
+    else if (dragMode == DragMode::threshold)
+        draggedParameters[0] = state->getParameter(bandThresholdIds[index]);
+    else if (dragMode == DragMode::leftEdge || dragMode == DragMode::rightEdge)
+        draggedParameters[0] = state->getParameter(bandWidthIds[index]);
+
+    for (auto* parameter : draggedParameters)
+        if (parameter != nullptr)
+            parameter->beginChangeGesture();
 }
 
 void MultibandGraph::endDragGesture()
 {
-    if (draggedParameter != nullptr)
-        draggedParameter->endChangeGesture();
-    draggedParameter = nullptr;
+    for (auto*& parameter : draggedParameters)
+    {
+        if (parameter != nullptr)
+            parameter->endChangeGesture();
+        parameter = nullptr;
+    }
     dragMode = DragMode::none;
 }
 
@@ -450,11 +536,17 @@ void MultibandGraph::drawBands(juce::Graphics& g, juce::Rectangle<float>) const
         g.drawRoundedRectangle(bounds.reduced(1.0f, 2.0f), 6.0f, selected ? 2.0f : 1.0f);
 
         const auto centreX = frequencyToX(bandFrequency(index), graphBounds());
-        g.fillEllipse(centreX - 6.0f, graphBounds().getCentreY() - 6.0f, 12.0f, 12.0f);
+        const auto thresholdY = thresholdYForBand(index);
+        g.drawHorizontalLine(static_cast<int>(std::round(thresholdY)), bounds.getX() + 3.0f, bounds.getRight() - 3.0f);
+        g.fillEllipse(centreX - 7.0f, thresholdY - 7.0f, 14.0f, 14.0f);
         if (selected)
         {
-            g.fillRoundedRectangle(bounds.getX() - 3.0f, graphBounds().getCentreY() - 14.0f, 6.0f, 28.0f, 2.0f);
-            g.fillRoundedRectangle(bounds.getRight() - 3.0f, graphBounds().getCentreY() - 14.0f, 6.0f, 28.0f, 2.0f);
+            g.fillRoundedRectangle(bounds.getX() - 3.0f, thresholdY - 14.0f, 6.0f, 28.0f, 2.0f);
+            g.fillRoundedRectangle(bounds.getRight() - 3.0f, thresholdY - 14.0f, 6.0f, 28.0f, 2.0f);
+            g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
+            g.drawText(juce::String(bandThreshold(index), 1) + " dB",
+                       juce::Rectangle<float>(centreX + 10.0f, thresholdY - 10.0f, 66.0f, 18.0f).toNearestInt(),
+                       juce::Justification::centredLeft);
         }
 
         if (bounds.getWidth() >= 48.0f)
@@ -532,10 +624,11 @@ void MultibandGraph::setParameterValue(const juce::String& id, float plainValue)
         const auto normalized = parameter->convertTo0to1(plainValue);
         if (std::abs(parameter->getValue() - normalized) < 1.0e-6f)
             return;
-        if (parameter != draggedParameter)
+        const auto isDragged = std::find(draggedParameters.begin(), draggedParameters.end(), parameter) != draggedParameters.end();
+        if (! isDragged)
             parameter->beginChangeGesture();
         parameter->setValueNotifyingHost(normalized);
-        if (parameter != draggedParameter)
+        if (! isDragged)
             parameter->endChangeGesture();
     }
 }
@@ -554,6 +647,21 @@ float MultibandGraph::bandFrequency(int zeroBasedIndex) const
 float MultibandGraph::bandWidth(int zeroBasedIndex) const
 {
     return parameterValue(bandWidthIds[static_cast<size_t>(zeroBasedIndex)], defaultWidthOctaves);
+}
+
+float MultibandGraph::bandThreshold(int zeroBasedIndex) const
+{
+    return parameterValue(bandThresholdIds[static_cast<size_t>(zeroBasedIndex)], -24.0f);
+}
+
+float MultibandGraph::thresholdToY(float thresholdDb, juce::Rectangle<float> bounds)
+{
+    return juce::jmap(juce::jlimit(-90.0f, 0.0f, thresholdDb), -96.0f, 12.0f, bounds.getBottom(), bounds.getY());
+}
+
+float MultibandGraph::yToThreshold(float y, juce::Rectangle<float> bounds)
+{
+    return juce::jlimit(-90.0f, 0.0f, juce::jmap(y, bounds.getBottom(), bounds.getY(), -96.0f, 12.0f));
 }
 
 float MultibandGraph::frequencyToX(float frequency, juce::Rectangle<float> bounds)

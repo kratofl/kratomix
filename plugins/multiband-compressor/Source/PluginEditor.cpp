@@ -4,8 +4,6 @@ namespace
 {
 constexpr int editorWidth = 1160;
 constexpr int editorHeight = 660;
-constexpr float knobStartAngle = juce::MathConstants<float>::pi * 1.2f;
-constexpr float knobEndAngle = juce::MathConstants<float>::pi * 2.8f;
 
 juce::Colour shellColour()
 {
@@ -89,7 +87,7 @@ MultibandCompressorAudioProcessorEditor::MultibandCompressorAudioProcessorEditor
 
 MultibandCompressorAudioProcessorEditor::~MultibandCompressorAudioProcessorEditor()
 {
-    for (auto* slider : { &inputSlider, &outputSlider, &mixSlider, &frequencySlider, &widthSlider, &thresholdSlider, &rangeSlider, &ratioSlider, &attackSlider, &releaseSlider, &kneeSlider, &makeupSlider, &stereoLinkSlider })
+    for (auto* slider : { &inputSlider, &outputSlider, &mixSlider })
         slider->setLookAndFeel(nullptr);
     bypassButton.setLookAndFeel(nullptr);
 }
@@ -154,7 +152,7 @@ void MultibandCompressorAudioProcessorEditor::resized()
     bypassButton.setBounds(outputArea.removeFromBottom(90).reduced(0, 4));
     outputMeter.setBounds(outputArea.reduced(4, 8));
 
-    auto bandArea = bounds.removeFromBottom(168);
+    auto bandArea = bounds.removeFromBottom(118);
     bounds.removeFromBottom(10);
     graph.setBounds(bounds);
     bandPanel.setBounds(bandArea.reduced(0, 2));
@@ -169,28 +167,26 @@ void MultibandCompressorAudioProcessorEditor::resized()
     auto modeArea = panel.removeFromLeft(128);
     modeLabel.setBounds(modeArea.removeFromTop(18));
     modeBox.setBounds(modeArea.removeFromTop(30));
-    modeArea.removeFromTop(8);
-    detectorLabel.setBounds(modeArea.removeFromTop(18));
-    detectorBox.setBounds(modeArea.removeFromTop(30));
 
-    const auto sliderWidth = juce::jmax(68, panel.getWidth() / 10);
-    auto placeBandSlider = [sliderWidth](juce::Rectangle<int>& area, juce::Label& label, juce::Slider& slider)
+    const auto fieldWidth = juce::jmax(68, panel.getWidth() / 10);
+    auto placeBandField = [fieldWidth](juce::Rectangle<int>& area, juce::Label& label, juce::Slider& slider)
     {
-        auto slot = area.removeFromLeft(sliderWidth).reduced(5, 0);
+        auto slot = area.removeFromLeft(fieldWidth).reduced(5, 0);
         label.setBounds(slot.removeFromTop(18));
-        slider.setBounds(slot.removeFromTop(118));
+        slot.removeFromTop(5);
+        slider.setBounds(slot.removeFromTop(34));
     };
 
-    placeBandSlider(panel, frequencyLabel, frequencySlider);
-    placeBandSlider(panel, widthLabel, widthSlider);
-    placeBandSlider(panel, thresholdLabel, thresholdSlider);
-    placeBandSlider(panel, rangeLabel, rangeSlider);
-    placeBandSlider(panel, ratioLabel, ratioSlider);
-    placeBandSlider(panel, attackLabel, attackSlider);
-    placeBandSlider(panel, releaseLabel, releaseSlider);
-    placeBandSlider(panel, kneeLabel, kneeSlider);
-    placeBandSlider(panel, makeupLabel, makeupSlider);
-    placeBandSlider(panel, stereoLinkLabel, stereoLinkSlider);
+    placeBandField(panel, frequencyLabel, frequencySlider);
+    placeBandField(panel, widthLabel, widthSlider);
+    placeBandField(panel, thresholdLabel, thresholdSlider);
+    placeBandField(panel, rangeLabel, rangeSlider);
+    placeBandField(panel, ratioLabel, ratioSlider);
+    placeBandField(panel, attackLabel, attackSlider);
+    placeBandField(panel, releaseLabel, releaseSlider);
+    placeBandField(panel, kneeLabel, kneeSlider);
+    placeBandField(panel, makeupLabel, makeupSlider);
+    placeBandField(panel, stereoLinkLabel, stereoLinkSlider);
 }
 
 void MultibandCompressorAudioProcessorEditor::configureGlobalControls()
@@ -248,14 +244,13 @@ void MultibandCompressorAudioProcessorEditor::configureBandControls()
         bandPanel.addAndMakeVisible(*button);
     }
 
-    for (auto* label : { &modeLabel, &detectorLabel, &frequencyLabel, &widthLabel, &thresholdLabel, &rangeLabel, &ratioLabel, &attackLabel, &releaseLabel, &kneeLabel, &makeupLabel, &stereoLinkLabel })
+    for (auto* label : { &modeLabel, &frequencyLabel, &widthLabel, &thresholdLabel, &rangeLabel, &ratioLabel, &attackLabel, &releaseLabel, &kneeLabel, &makeupLabel, &stereoLinkLabel })
     {
         styleCaption(*label);
         bandPanel.addAndMakeVisible(*label);
     }
 
     modeLabel.setText("MODE", juce::dontSendNotification);
-    detectorLabel.setText("SIDE CHAIN", juce::dontSendNotification);
     frequencyLabel.setText("FREQ", juce::dontSendNotification);
     widthLabel.setText("WIDTH", juce::dontSendNotification);
     thresholdLabel.setText("THRESHOLD", juce::dontSendNotification);
@@ -268,20 +263,18 @@ void MultibandCompressorAudioProcessorEditor::configureBandControls()
     stereoLinkLabel.setText("ST LINK", juce::dontSendNotification);
 
     configureCombo(modeBox, multiband::bandModeChoices());
-    configureCombo(detectorBox, multiband::detectorSourceChoices());
     bandPanel.addAndMakeVisible(modeBox);
-    bandPanel.addAndMakeVisible(detectorBox);
 
-    configureRotarySlider(frequencySlider, frequencyLabel, "frequency", 1000.0);
-    configureRotarySlider(widthSlider, widthLabel, "width", 2.0);
-    configureRotarySlider(thresholdSlider, thresholdLabel, "threshold", -24.0);
-    configureRotarySlider(rangeSlider, rangeLabel, "range", -6.0);
-    configureRotarySlider(ratioSlider, ratioLabel, "ratio", 2.0);
-    configureRotarySlider(attackSlider, attackLabel, "attack", 20.0);
-    configureRotarySlider(releaseSlider, releaseLabel, "release", 120.0);
-    configureRotarySlider(kneeSlider, kneeLabel, "knee", 6.0);
-    configureRotarySlider(makeupSlider, makeupLabel, "output", 0.0);
-    configureRotarySlider(stereoLinkSlider, stereoLinkLabel, "stereoLink", 1.0);
+    configureValueField(frequencySlider, "frequency", 1000.0);
+    configureValueField(widthSlider, "width", 2.0);
+    configureValueField(thresholdSlider, "threshold", -24.0);
+    configureValueField(rangeSlider, "range", -6.0);
+    configureValueField(ratioSlider, "ratio", 2.0);
+    configureValueField(attackSlider, "attack", 20.0);
+    configureValueField(releaseSlider, "release", 120.0);
+    configureValueField(kneeSlider, "knee", 6.0);
+    configureValueField(makeupSlider, "output", 0.0);
+    configureValueField(stereoLinkSlider, "stereoLink", 1.0);
 
     ratioSlider.textFromValueFunction = [](double value) { return juce::String(value, value < 10.0 ? 2 : 1) + ":1"; };
     frequencySlider.textFromValueFunction = [](double value) { return juce::String(static_cast<int>(std::round(value))); };
@@ -296,20 +289,21 @@ void MultibandCompressorAudioProcessorEditor::configureBandControls()
     };
 }
 
-void MultibandCompressorAudioProcessorEditor::configureRotarySlider(juce::Slider& slider,
-                                                                    juce::Label&,
-                                                                    const juce::String& componentId,
-                                                                    double doubleClickValue)
+void MultibandCompressorAudioProcessorEditor::configureValueField(juce::Slider& slider,
+                                                                  const juce::String& componentId,
+                                                                  double doubleClickValue)
 {
     slider.setComponentID(componentId);
-    slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setRotaryParameters(knobStartAngle, knobEndAngle, true);
-    slider.setLookAndFeel(&rackLookAndFeel);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 76, 22);
+    slider.setSliderStyle(juce::Slider::LinearBar);
+    slider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 72, 28);
     slider.setTextBoxIsEditable(true);
     slider.setDoubleClickReturnValue(true, doubleClickValue);
+    slider.setMouseDragSensitivity(180);
+    slider.setColour(juce::Slider::backgroundColourId, juce::Colour::fromRGB(27, 24, 22));
+    slider.setColour(juce::Slider::trackColourId, accentColour().withAlpha(0.16f));
+    slider.setColour(juce::Slider::thumbColourId, accentColour().withAlpha(0.7f));
     slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour::fromRGB(250, 231, 202));
-    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour::fromRGB(74, 52, 36));
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour::fromRGBA(28, 23, 21, 160));
     bandPanel.addAndMakeVisible(slider);
 }
@@ -347,7 +341,6 @@ void MultibandCompressorAudioProcessorEditor::configureCombo(juce::ComboBox& box
 void MultibandCompressorAudioProcessorEditor::rebuildBandAttachments(int zeroBasedBandIndex)
 {
     modeAttachment.reset();
-    detectorAttachment.reset();
     frequencyAttachment.reset();
     widthAttachment.reset();
     thresholdAttachment.reset();
@@ -374,7 +367,6 @@ void MultibandCompressorAudioProcessorEditor::rebuildBandAttachments(int zeroBas
     bandLabel.setText(multiband::bandLabel(index).toUpperCase(), juce::dontSendNotification);
 
     modeAttachment = std::make_unique<ComboBoxAttachment>(pluginProcessor.parameters, multiband::bandModeIds[idx], modeBox);
-    detectorAttachment = std::make_unique<ComboBoxAttachment>(pluginProcessor.parameters, multiband::bandDetectorSourceIds[idx], detectorBox);
     frequencyAttachment = std::make_unique<SliderAttachment>(pluginProcessor.parameters, multiband::bandFrequencyIds[idx], frequencySlider);
     widthAttachment = std::make_unique<SliderAttachment>(pluginProcessor.parameters, multiband::bandWidthIds[idx], widthSlider);
     thresholdAttachment = std::make_unique<SliderAttachment>(pluginProcessor.parameters, multiband::bandThresholdIds[idx], thresholdSlider);
@@ -393,7 +385,6 @@ void MultibandCompressorAudioProcessorEditor::rebuildBandAttachments(int zeroBas
 void MultibandCompressorAudioProcessorEditor::setBandControlsEnabled(bool enabled)
 {
     for (auto* component : { static_cast<juce::Component*>(&modeBox),
-                             static_cast<juce::Component*>(&detectorBox),
                              static_cast<juce::Component*>(&frequencySlider),
                              static_cast<juce::Component*>(&widthSlider),
                              static_cast<juce::Component*>(&thresholdSlider),

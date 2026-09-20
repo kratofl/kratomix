@@ -12,13 +12,11 @@ struct MultibandAnalyzerFrame
 
     std::array<float, sampleCount> input {};
     std::array<float, sampleCount> output {};
-    std::array<float, sampleCount> sidechain {};
     std::array<float, multiband::maxBands> dynamicGainDb {};
     std::array<float, multiband::maxBands> detectorLevelDb {};
     std::array<float, multiband::maxBands> bandLevelDb {};
     double sampleRate = 44100.0;
     float outputLevel = 0.0f;
-    bool sidechainActive = false;
 };
 
 struct MultibandBandSettings
@@ -36,7 +34,6 @@ struct MultibandBandSettings
     float kneeDb = 6.0f;
     float makeupDb = 0.0f;
     multiband::BandMode mode = multiband::BandMode::compress;
-    multiband::DetectorSource detectorSource = multiband::DetectorSource::internal;
     float stereoLink = 1.0f;
 };
 

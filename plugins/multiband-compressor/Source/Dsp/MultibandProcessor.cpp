@@ -116,7 +116,7 @@ void MultibandBandFilter::process(const juce::AudioBuffer<float>& source,
 
 MultibandProcessor::MultibandProcessor()
 {
-    for (auto* lane : { &inputAnalyzerSamples, &outputAnalyzerSamples, &sidechainAnalyzerSamples })
+    for (auto* lane : { &inputAnalyzerSamples, &outputAnalyzerSamples })
         for (auto& sample : *lane)
             sample.store(0.0f, std::memory_order_relaxed);
 
@@ -134,7 +134,7 @@ void MultibandProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
     juce::dsp::ProcessSpec filterSpec = spec;
     filterSpec.numChannels = static_cast<juce::uint32>(preparedChannels);
-    for (auto* filters : { &audioFilters, &detectorFilters, &sidechainFilters })
+    for (auto* filters : { &audioFilters, &detectorFilters })
         for (auto& filter : *filters)
             filter.prepare(filterSpec);
     lookaheadDelay.prepare(filterSpec);
@@ -152,20 +152,19 @@ void MultibandProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
 void MultibandProcessor::reset()
 {
-    for (auto* filters : { &audioFilters, &detectorFilters, &sidechainFilters })
+    for (auto* filters : { &audioFilters, &detectorFilters })
         for (auto& filter : *filters)
             filter.reset();
     lookaheadDelay.reset();
     dryDelay.reset();
     analyzerWriteIndex.store(0, std::memory_order_relaxed);
-    analyzerSidechainActive.store(false, std::memory_order_relaxed);
 
     detectorEnvelope.fill(0.0f);
     gainDbState.fill(0.0f);
     bandEnergyState.fill(0.0f);
     sampleGainDb.fill(0.0f);
 
-    for (auto* lane : { &inputAnalyzerSamples, &outputAnalyzerSamples, &sidechainAnalyzerSamples })
+    for (auto* lane : { &inputAnalyzerSamples, &outputAnalyzerSamples })
         for (auto& sample : *lane)
             sample.store(0.0f, std::memory_order_relaxed);
 
@@ -210,7 +209,7 @@ void MultibandProcessor::updateSettings(const MultibandSettings& newSettings)
         applyTargetsImmediately();
 }
 
-void MultibandProcessor::process(juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>* sidechainBuffer)
+void MultibandProcessor::process(juce::AudioBuffer<float>& buffer)
 {
     const auto numSamples = buffer.getNumSamples();
     const auto numChannels = juce::jmin(buffer.getNumChannels(), preparedChannels);
@@ -227,7 +226,7 @@ void MultibandProcessor::process(juce::AudioBuffer<float>& buffer, const juce::A
 
     if (settings.bypassed)
     {
-        publishAnalyzerSamples(dryBuffer, buffer, sidechainBuffer, numSamples);
+        publishAnalyzerSamples(dryBuffer, buffer, numSamples);
         outputLevel.store(buffer.getRMSLevel(0, 0, numSamples));
         return;
     }
@@ -248,20 +247,12 @@ void MultibandProcessor::process(juce::AudioBuffer<float>& buffer, const juce::A
 
     processLookahead(buffer, numChannels, numSamples);
 
-    const auto sidechainAvailable = sidechainBuffer != nullptr
-                                    && sidechainBuffer->getNumChannels() > 0
-                                    && sidechainBuffer->getNumSamples() > 0;
-
     for (int bandIndex = 0; bandIndex < multiband::maxBands; ++bandIndex)
     {
         const auto index = static_cast<size_t>(bandIndex);
         audioFilters[index].process(buffer, audioBands[index], numChannels, numSamples);
         detectorFilters[index].process(detectorBuffer, detectorBands[index], numChannels, numSamples);
 
-        if (sidechainAvailable)
-            sidechainFilters[index].process(*sidechainBuffer, sidechainBands[index], numChannels, numSamples);
-        else
-            sidechainBands[index].clear(0, numSamples);
     }
 
     const auto anySoloOrAudition = std::any_of(settings.bands.begin(), settings.bands.end(), [](const auto& band)
@@ -276,7 +267,7 @@ void MultibandProcessor::process(juce::AudioBuffer<float>& buffer, const juce::A
         for (int bandIndex = 0; bandIndex < multiband::maxBands; ++bandIndex)
         {
             const auto& band = settings.bands[static_cast<size_t>(bandIndex)];
-            const auto magnitude = detectorMagnitudeForBand(bandIndex, sample, detectorBands, sidechainBands, sidechainAvailable);
+            const auto magnitude = detectorMagnitudeForBand(bandIndex, sample, detectorBands);
             const auto attack = envelopeCoefficient(band.attackMs, sampleRate);
             const auto release = envelopeCoefficient(band.releaseMs, sampleRate);
             auto& envelope = detectorEnvelope[static_cast<size_t>(bandIndex)];
@@ -305,10 +296,8 @@ void MultibandProcessor::process(juce::AudioBuffer<float>& buffer, const juce::A
                     continue;
 
                 const auto gain = decibelsToGain(sampleGainDb[static_cast<size_t>(bandIndex)] + band.makeupDb);
-                const auto detectorUsesExternal = sidechainAvailable && band.detectorSource == multiband::DetectorSource::external;
                 const auto& audibleBand = band.audition
-                                              ? (detectorUsesExternal ? sidechainBands[static_cast<size_t>(bandIndex)]
-                                                                      : detectorBands[static_cast<size_t>(bandIndex)])
+                                              ? detectorBands[static_cast<size_t>(bandIndex)]
                                               : audioBands[static_cast<size_t>(bandIndex)];
                 const auto bandSample = audibleBand.getSample(channel, sample);
                 sum += anySoloOrAudition ? bandSample * gain : bandSample * (gain - 1.0f);
@@ -338,7 +327,7 @@ void MultibandProcessor::process(juce::AudioBuffer<float>& buffer, const juce::A
     for (int bandIndex = 0; bandIndex < multiband::maxBands; ++bandIndex)
         bandLevelTelemetry[static_cast<size_t>(bandIndex)].store(gainToDecibels(bandEnergyState[static_cast<size_t>(bandIndex)]), std::memory_order_relaxed);
 
-    publishAnalyzerSamples(dryBuffer, buffer, sidechainBuffer, numSamples);
+    publishAnalyzerSamples(dryBuffer, buffer, numSamples);
 
     const auto divisor = static_cast<double>(juce::jmax(1, numSamples * numChannels));
     outputLevel.store(static_cast<float>(std::sqrt(energy / divisor)));
@@ -363,7 +352,6 @@ void MultibandProcessor::copyAnalyzerFrame(MultibandAnalyzerFrame& destination) 
         const auto sourceIndex = (writeIndex + sample) % MultibandAnalyzerFrame::sampleCount;
         destination.input[static_cast<size_t>(sample)] = inputAnalyzerSamples[static_cast<size_t>(sourceIndex)].load(std::memory_order_relaxed);
         destination.output[static_cast<size_t>(sample)] = outputAnalyzerSamples[static_cast<size_t>(sourceIndex)].load(std::memory_order_relaxed);
-        destination.sidechain[static_cast<size_t>(sample)] = sidechainAnalyzerSamples[static_cast<size_t>(sourceIndex)].load(std::memory_order_relaxed);
     }
 
     for (int band = 0; band < multiband::maxBands; ++band)
@@ -375,7 +363,6 @@ void MultibandProcessor::copyAnalyzerFrame(MultibandAnalyzerFrame& destination) 
 
     destination.sampleRate = sampleRate;
     destination.outputLevel = outputLevel.load(std::memory_order_relaxed);
-    destination.sidechainActive = analyzerSidechainActive.load(std::memory_order_relaxed);
 }
 
 void MultibandProcessor::allocateBuffers(int numChannels, int numSamples)
@@ -383,7 +370,7 @@ void MultibandProcessor::allocateBuffers(int numChannels, int numSamples)
     dryBuffer.setSize(numChannels, numSamples);
     detectorBuffer.setSize(numChannels, numSamples);
 
-    for (auto* collection : { &audioBands, &detectorBands, &sidechainBands })
+    for (auto* collection : { &audioBands, &detectorBands })
         for (auto& band : *collection)
             band.setSize(numChannels, numSamples);
 }
@@ -401,7 +388,7 @@ void MultibandProcessor::updateBandFilters()
     for (int index = 0; index < multiband::maxBands; ++index)
     {
         const auto& band = settings.bands[static_cast<size_t>(index)];
-        for (auto* filters : { &audioFilters, &detectorFilters, &sidechainFilters })
+        for (auto* filters : { &audioFilters, &detectorFilters })
             (*filters)[static_cast<size_t>(index)].setBand(band.frequencyHz, band.widthOctaves, sampleRate);
     }
 }
@@ -428,14 +415,10 @@ void MultibandProcessor::processLookahead(juce::AudioBuffer<float>& audioBuffer,
 
 float MultibandProcessor::detectorMagnitudeForBand(int bandIndex,
                                                    int sample,
-                                                   const std::array<juce::AudioBuffer<float>, multiband::maxBands>& internalBands,
-                                                   const std::array<juce::AudioBuffer<float>, multiband::maxBands>& externalBands,
-                                                   bool sidechainAvailable) const noexcept
+                                                   const std::array<juce::AudioBuffer<float>, multiband::maxBands>& bandBuffers) const noexcept
 {
     const auto& band = settings.bands[static_cast<size_t>(bandIndex)];
-    const auto& source = sidechainAvailable && band.detectorSource == multiband::DetectorSource::external
-                             ? externalBands[static_cast<size_t>(bandIndex)]
-                             : internalBands[static_cast<size_t>(bandIndex)];
+    const auto& source = bandBuffers[static_cast<size_t>(bandIndex)];
     auto linkedMagnitude = 0.0f;
     auto averageMagnitude = 0.0f;
     const auto channels = juce::jmax(1, source.getNumChannels());
@@ -473,26 +456,18 @@ float MultibandProcessor::computeDynamicGainDb(const MultibandBandSettings& band
 
 void MultibandProcessor::publishAnalyzerSamples(const juce::AudioBuffer<float>& inputBuffer,
                                                 const juce::AudioBuffer<float>& outputBuffer,
-                                                const juce::AudioBuffer<float>* sidechainBuffer,
                                                 int numSamples) noexcept
 {
     auto writeIndex = analyzerWriteIndex.load(std::memory_order_relaxed);
-    const auto sidechainAvailable = sidechainBuffer != nullptr
-                                    && sidechainBuffer->getNumChannels() > 0
-                                    && sidechainBuffer->getNumSamples() > 0;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
         inputAnalyzerSamples[static_cast<size_t>(writeIndex)].store(monoSampleAt(inputBuffer, sample), std::memory_order_relaxed);
         outputAnalyzerSamples[static_cast<size_t>(writeIndex)].store(monoSampleAt(outputBuffer, sample), std::memory_order_relaxed);
-        sidechainAnalyzerSamples[static_cast<size_t>(writeIndex)].store(
-            sidechainAvailable ? monoSampleAt(*sidechainBuffer, juce::jmin(sample, sidechainBuffer->getNumSamples() - 1)) : 0.0f,
-            std::memory_order_relaxed);
 
         writeIndex = (writeIndex + 1) % MultibandAnalyzerFrame::sampleCount;
     }
 
-    analyzerSidechainActive.store(sidechainAvailable, std::memory_order_relaxed);
     analyzerWriteIndex.store(writeIndex, std::memory_order_release);
 }
 

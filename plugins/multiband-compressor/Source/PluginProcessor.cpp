@@ -26,7 +26,6 @@ namespace kratomix
 MultibandCompressorAudioProcessor::MultibandCompressorAudioProcessor()
     : AudioProcessor(BusesProperties()
           .withInput("Input", juce::AudioChannelSet::stereo(), true)
-          .withInput("Sidechain", juce::AudioChannelSet::stereo(), true)
           .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, stateId, multiband::createParameterLayout())
 {
@@ -59,15 +58,6 @@ bool MultibandCompressorAudioProcessor::isBusesLayoutSupported(const BusesLayout
     if (mainInput != mainOutput)
         return false;
 
-    if (layouts.inputBuses.size() > 1)
-    {
-        const auto sidechain = layouts.getChannelSet(true, 1);
-        if (! sidechain.isDisabled()
-            && sidechain != juce::AudioChannelSet::mono()
-            && sidechain != juce::AudioChannelSet::stereo())
-            return false;
-    }
-
     return true;
 }
 
@@ -85,15 +75,7 @@ void MultibandCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& b
     if (latency != getLatencySamples())
         setLatencySamples(latency);
 
-    if (auto* sidechainBus = getBus(true, 1); sidechainBus != nullptr && sidechainBus->isEnabled())
-    {
-        auto sidechainBuffer = getBusBuffer(buffer, true, 1);
-        multibandProcessor.process(mainBuffer, &sidechainBuffer);
-    }
-    else
-    {
-        multibandProcessor.process(mainBuffer, nullptr);
-    }
+    multibandProcessor.process(mainBuffer);
 }
 
 juce::AudioProcessorEditor* MultibandCompressorAudioProcessor::createEditor()
@@ -187,10 +169,6 @@ MultibandSettings MultibandCompressorAudioProcessor::readSettings() const
             0,
             static_cast<int>(multiband::BandMode::expand),
             static_cast<int>(std::round(parameters.getRawParameterValue(multiband::bandModeIds[static_cast<size_t>(index)])->load()))));
-        band.detectorSource = static_cast<multiband::DetectorSource>(juce::jlimit(
-            0,
-            static_cast<int>(multiband::DetectorSource::external),
-            static_cast<int>(std::round(parameters.getRawParameterValue(multiband::bandDetectorSourceIds[static_cast<size_t>(index)])->load()))));
         band.stereoLink = parameters.getRawParameterValue(multiband::bandStereoLinkIds[static_cast<size_t>(index)])->load();
     }
 

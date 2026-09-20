@@ -86,6 +86,43 @@ juce::Component* findChildComponentWithId(juce::Component& component, const juce
 
     return nullptr;
 }
+
+juce::ComboBox* findComboBoxWithItem(juce::Component& component, const juce::String& itemText)
+{
+    if (auto* comboBox = dynamic_cast<juce::ComboBox*>(&component))
+        for (int itemId = 1; itemId <= comboBox->getNumItems(); ++itemId)
+            if (comboBox->getItemText(itemId - 1) == itemText)
+                return comboBox;
+
+    for (int index = 0; index < component.getNumChildComponents(); ++index)
+        if (auto* found = findComboBoxWithItem(*component.getChildComponent(index), itemText))
+            return found;
+
+    return nullptr;
+}
+
+juce::MouseEvent makeGraphMouseEvent(juce::Component& graph,
+                                     juce::Point<float> position,
+                                     juce::Point<float> mouseDownPosition,
+                                     bool wasDragged)
+{
+    const auto now = juce::Time::getCurrentTime();
+    return { juce::Desktop::getInstance().getMainMouseSource(),
+             position,
+             juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier),
+             1.0f,
+             0.0f,
+             0.0f,
+             0.0f,
+             0.0f,
+             &graph,
+             &graph,
+             now,
+             mouseDownPosition,
+             now,
+             1,
+             wasDragged };
+}
 }
 
 int main()
@@ -94,6 +131,10 @@ int main()
     int failures = 0;
 
     kratomix::MultibandCompressorAudioProcessor processor;
+
+    expect(processor.getBusCount(true) == 1,
+           "Multiband compressor should expose only its main input bus",
+           failures);
 
     for (const auto* id : kratomix::multiband::globalParameterIds)
         expectParameter(processor.parameters, id, failures);
@@ -115,7 +156,6 @@ int main()
         expectParameter(processor.parameters, kratomix::multiband::bandKneeIds[idx], failures);
         expectParameter(processor.parameters, kratomix::multiband::bandMakeupIds[idx], failures);
         expectParameter(processor.parameters, kratomix::multiband::bandModeIds[idx], failures);
-        expectParameter(processor.parameters, kratomix::multiband::bandDetectorSourceIds[idx], failures);
         expectParameter(processor.parameters, kratomix::multiband::bandStereoLinkIds[idx], failures);
     }
 
@@ -258,48 +298,6 @@ int main()
     }
 
     {
-        kratomix::MultibandProcessor dsp;
-        juce::dsp::ProcessSpec spec;
-        spec.sampleRate = 48000.0;
-        spec.maximumBlockSize = 512;
-        spec.numChannels = 2;
-        dsp.prepare(spec);
-
-        kratomix::MultibandSettings settings;
-        for (auto& band : settings.bands)
-            band.enabled = false;
-        auto& band = settings.bands[2];
-        band.enabled = true;
-        band.frequencyHz = 1000.0f;
-        band.widthOctaves = 1.5f;
-        band.detectorSource = kratomix::multiband::DetectorSource::external;
-        band.thresholdDb = -40.0f;
-        band.rangeDb = -12.0f;
-        band.ratio = 8.0f;
-        band.attackMs = 0.1f;
-        band.releaseMs = 80.0f;
-        dsp.updateSettings(settings);
-
-        auto quietMain = makeSineBuffer(2, 512, 1000.0f, spec.sampleRate, 0.01f);
-        auto noSidechain = quietMain;
-        dsp.process(noSidechain, nullptr);
-
-        dsp.reset();
-        dsp.updateSettings(settings);
-        auto withSidechain = quietMain;
-        auto loudSidechain = makeSineBuffer(2, 512, 1000.0f, spec.sampleRate, 0.45f);
-        for (int block = 0; block < 12; ++block)
-        {
-            withSidechain = quietMain;
-            dsp.process(withSidechain, &loudSidechain);
-        }
-
-        expect(rmsLevel(withSidechain) < rmsLevel(noSidechain) * 0.9f,
-               "External sidechain should drive gain reduction when selected",
-               failures);
-    }
-
-    {
         kratomix::MultibandCompressorAudioProcessor latencyProcessor;
         latencyProcessor.disableNonMainBuses();
         setParameter(latencyProcessor.parameters, kratomix::multiband::lookaheadModeId, 1.0f);
@@ -325,10 +323,26 @@ int main()
         expect(editor != nullptr && findChildComponentWithId(*editor, "threshold") != nullptr,
                "Editor should expose the selected-band threshold control",
                failures);
+        expect(editor != nullptr && findComboBoxWithItem(*editor, "External") == nullptr,
+               "Multiband compressor should not offer an external sidechain source",
+               failures);
         auto* frequencyControl = editor != nullptr ? findChildComponentWithId(*editor, "frequency") : nullptr;
         expect(frequencyControl != nullptr && ! frequencyControl->isEnabled(),
                "Band controls should wait for the user to create or select a band",
                failures);
+
+        for (const auto* componentId : { "frequency", "width", "threshold", "range", "ratio", "attack", "release", "knee", "output", "stereoLink" })
+        {
+            auto* field = editor != nullptr ? dynamic_cast<juce::Slider*>(findChildComponentWithId(*editor, componentId)) : nullptr;
+            expect(field != nullptr && field->getSliderStyle() == juce::Slider::LinearBar,
+                   juce::String("Band value should use an editable field instead of a knob: ") + componentId,
+                   failures);
+            expect(field != nullptr && field->getHeight() >= 28
+                       && field->getParentComponent() != nullptr
+                       && field->getParentComponent()->getLocalBounds().contains(field->getBounds()),
+                   juce::String("Band value field should fit inside the panel: ") + componentId,
+                   failures);
+        }
     }
 
     {
@@ -352,15 +366,72 @@ int main()
 
         graph.setSelectedBandFrequency(2400.0f);
         graph.setSelectedBandWidth(1.25f);
+        graph.setSelectedBandThreshold(-48.0f);
         expect(std::abs(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandFrequencyIds[0])->load() - 2400.0f) < 2.0f,
                "Dragging a free band should update its centre frequency",
                failures);
         expect(std::abs(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandWidthIds[0])->load() - 1.25f) < 0.02f,
                "Band edge dragging or wheel input should update band width",
                failures);
+        expect(std::abs(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandThresholdIds[0])->load() + 48.0f) < 0.02f,
+               "Vertical band dragging should update the threshold",
+               failures);
+        const auto thresholdY = graph.thresholdYForBand(0);
+        graph.setSelectedBandThreshold(-24.0f);
+        expect(graph.thresholdYForBand(0) < thresholdY,
+               "A higher threshold should move the band handle upward",
+               failures);
         expect(graph.boundsForBand(0).getWidth() > 20.0f,
                "A free band should expose a visible frequency range",
                failures);
+
+        const auto dragStartFrequency = graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandFrequencyIds[0])->load();
+        const auto dragStartThreshold = graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandThresholdIds[0])->load();
+        const auto centreDragStart = juce::Point<float>(graph.boundsForBand(0).getCentreX(), graph.thresholdYForBand(0));
+        graph.mouseMove(makeGraphMouseEvent(graph, centreDragStart, centreDragStart, false));
+        expect(graph.getMouseCursor() == juce::MouseCursor(juce::MouseCursor::UpDownResizeCursor),
+               "The threshold handle should show a vertical drag cursor",
+               failures);
+        graph.mouseDown(makeGraphMouseEvent(graph, centreDragStart, centreDragStart, false));
+        graph.mouseDrag(makeGraphMouseEvent(graph, centreDragStart + juce::Point<float>(80.0f, -35.0f), centreDragStart, true));
+        graph.mouseUp(makeGraphMouseEvent(graph, centreDragStart + juce::Point<float>(80.0f, -35.0f), centreDragStart, true));
+        expect(std::abs(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandFrequencyIds[0])->load() - dragStartFrequency) < 2.0f,
+               "Dragging the threshold handle should not change band frequency",
+               failures);
+        expect(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandThresholdIds[0])->load() > dragStartThreshold,
+               "Dragging the threshold handle upward should raise its threshold",
+               failures);
+
+        const auto bodyDragStartFrequency = graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandFrequencyIds[0])->load();
+        const auto bodyDragStartThreshold = graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandThresholdIds[0])->load();
+        const auto bodyDragStart = juce::Point<float>(graph.boundsForBand(0).getCentreX(), graph.boundsForBand(0).getY() + 55.0f);
+        graph.mouseMove(makeGraphMouseEvent(graph, bodyDragStart, bodyDragStart, false));
+        expect(graph.getMouseCursor() == juce::MouseCursor(juce::MouseCursor::DraggingHandCursor),
+               "The band body should show a move cursor",
+               failures);
+        graph.mouseDown(makeGraphMouseEvent(graph, bodyDragStart, bodyDragStart, false));
+        graph.mouseDrag(makeGraphMouseEvent(graph, bodyDragStart + juce::Point<float>(80.0f, 35.0f), bodyDragStart, true));
+        graph.mouseUp(makeGraphMouseEvent(graph, bodyDragStart + juce::Point<float>(80.0f, 35.0f), bodyDragStart, true));
+        expect(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandFrequencyIds[0])->load() > bodyDragStartFrequency,
+               "Dragging the band body horizontally should change its frequency",
+               failures);
+        expect(std::abs(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandThresholdIds[0])->load() - bodyDragStartThreshold) < 0.02f,
+               "Dragging the band body should not change its threshold",
+               failures);
+
+        const auto dragStartWidth = graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandWidthIds[0])->load();
+        const auto edgeDragStart = juce::Point<float>(graph.boundsForBand(0).getRight(), graph.thresholdYForBand(0));
+        graph.mouseMove(makeGraphMouseEvent(graph, edgeDragStart, edgeDragStart, false));
+        expect(graph.getMouseCursor() == juce::MouseCursor(juce::MouseCursor::LeftRightResizeCursor),
+               "A band edge should show a horizontal resize cursor",
+               failures);
+        graph.mouseDown(makeGraphMouseEvent(graph, edgeDragStart, edgeDragStart, false));
+        graph.mouseDrag(makeGraphMouseEvent(graph, edgeDragStart + juce::Point<float>(45.0f, 0.0f), edgeDragStart, true));
+        graph.mouseUp(makeGraphMouseEvent(graph, edgeDragStart + juce::Point<float>(45.0f, 0.0f), edgeDragStart, true));
+        expect(graphProcessor.parameters.getRawParameterValue(kratomix::multiband::bandWidthIds[0])->load() > dragStartWidth,
+               "Dragging a band edge outward should increase its width",
+               failures);
+
         expect(graph.createBandAt({ 680.0f, 210.0f }) && graph.getSelectedBand() == 1,
                "Additional dynamic bands should be created in the next free slot",
                failures);

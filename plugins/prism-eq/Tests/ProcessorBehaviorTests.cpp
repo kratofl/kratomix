@@ -858,8 +858,12 @@ int main()
         expect(selectionProcessor.getBusCount(true) >= 2,
                "Prism EQ should expose an optional sidechain input bus",
                failures);
-        expect(selectionProcessor.getBus(true, 1) != nullptr && selectionProcessor.getBus(true, 1)->isEnabled(),
-               "Prism EQ sidechain bus should be enabled by default so Logic exposes the host sidechain selector",
+        expect(selectionProcessor.getBus(true, 1) != nullptr
+                   && selectionProcessor.getBus(true, 1)->getName() == "Sidechain",
+               "Prism EQ should identify its second input as the sidechain bus",
+               failures);
+        expect(selectionProcessor.getBus(true, 1) != nullptr && ! selectionProcessor.getBus(true, 1)->isEnabled(),
+               "Prism EQ sidechain bus should be optional and disabled until the host connects it",
                failures);
 
         kratomix::prism::PrismGraph graph;

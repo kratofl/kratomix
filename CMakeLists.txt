@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(Kratomix
-    VERSION 0.1.0
+    VERSION 1.0.2
     LANGUAGES C CXX)
 
 set(KRATOMIX_PLUGIN_VERSION "${PROJECT_VERSION}")
