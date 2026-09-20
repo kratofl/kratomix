@@ -49,6 +49,17 @@ Keep all user-facing names, comments, docs, bundle identifiers, and UI text unde
 - Avoid marketing copy inside the plugin UI.
 - Use restrained Kratomix styling and readable labels.
 
+## JUCE State and UI Regression Rules
+
+- Populate every `juce::ComboBox` completely before constructing its `ComboBoxAttachment`. Constructor initializer lists run before the editor constructor body, so do not store a direct attachment member when the box items are added in that body. Use a deferred attachment such as `std::unique_ptr` and create it only after `addItem` or `addItemList` has completed.
+- Treat parameter persistence and visible editor restoration as separate behavior. A correct APVTS value is not sufficient if the reopened control is blank, disabled, or attached to the wrong contextual item.
+- When controls depend on a selected band or other transient editor context, reconstruct a useful context from the restored APVTS state before creating the contextual attachments. For graph editors, select an existing active band on reopen instead of always starting with no selection.
+- For every persisted choice control, add a round-trip regression test that sets a non-default value, calls `getStateInformation`, restores it into a new processor with `setStateInformation`, creates a new editor, and verifies both the raw parameter and the visible control selection.
+- Give critical or dynamically attached controls stable component IDs so tests can find the actual editor components. Tests for regressions involving missing controls must verify visibility, enabled state, selected item, and usable bounds rather than only checking that the editor is constructible.
+- Treat `Rectangle::removeFromTop`, `removeFromLeft`, and similar calls as a strict layout budget. The requested control heights, widths, margins, and spacers must fit within the original rectangle. Do not use `translated` to hide an exhausted rectangle; verify important controls remain inside their parent and keep a usable size. Combo boxes should normally be at least 24 pixels high.
+- Distinguish the host sidechain selector in Logic's window chrome from any sidechain choice inside the plug-in editor. For an Audio Unit host sidechain, expose bus 0 as the active main input and bus 1 named `Sidechain` as an optional input that is disabled by default until the host connects it. Add a processor test for the bus count, name, and default disabled state. Run `make validate PLUGIN=<slug>`; it must find exactly one registered AU identity and both input buses. Then verify the actual Logic window shows its `Side Chain` selector. `auval`, an internal ComboBox test, or a visible analyzer-sidechain mode alone does not prove that host control exists.
+- During Audio Unit UI iteration, give changed binaries a newer component `VERSION`; Logic can otherwise retain the prior Cocoa-view revision and show only its generic plug-in placeholder after a restart. Confirm the `Component Version` printed by `make validate PLUGIN=<slug> VERSION=<version>` exactly matches the requested version. If Logic still holds the old revision, quit Logic and remove only that plug-in's Audio Component and Logic cache entries before rescanning; preserve the rest of the user's cache and preferences.
+
 ## Build Commands
 
 Standard workflow from the monorepo root:

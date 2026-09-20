@@ -1,7 +1,5 @@
 #include "WarmthProcessor.h"
 
-#include "ControlValues.h"
-
 namespace kratomix
 {
 namespace
@@ -15,7 +13,7 @@ namespace
 
     float shelfQ() noexcept
     {
-        return 0.7071f;
+        return 0.62f;
     }
 }
 
@@ -63,11 +61,13 @@ void WarmthProcessor::reset()
 void WarmthProcessor::updateSettings(const WarmthSettings& newSettings)
 {
     settings = newSettings;
-    settings.drive = controls::snapDrive(newSettings.drive);
-    settings.highPassHz = controls::snapHighPass(newSettings.highPassHz);
-    settings.warmthDb = controls::snapWarmth(newSettings.warmthDb);
-    settings.presenceDb = controls::snapPresence(newSettings.presenceDb);
-    settings.airDb = controls::snapAir(newSettings.airDb);
+    settings.inputGainDb = juce::jlimit(-18.0f, 18.0f, newSettings.inputGainDb);
+    settings.drive = juce::jlimit(0.0f, 10.0f, newSettings.drive);
+    settings.highPassHz = juce::jlimit(20.0f, 180.0f, newSettings.highPassHz);
+    settings.warmthDb = juce::jlimit(-6.0f, 6.0f, newSettings.warmthDb);
+    settings.presenceDb = juce::jlimit(-6.0f, 6.0f, newSettings.presenceDb);
+    settings.airDb = juce::jlimit(-6.0f, 6.0f, newSettings.airDb);
+    settings.outputGainDb = juce::jlimit(-18.0f, 18.0f, newSettings.outputGainDb);
 
     inputGainDbSmoother.setTargetValue(settings.inputGainDb);
     driveSmoother.setTargetValue(settings.drive);
@@ -104,6 +104,7 @@ void WarmthProcessor::process(juce::AudioBuffer<float>& buffer)
         const auto warmthDb = warmthSmoother.getNextValue();
         const auto presenceDb = presenceSmoother.getNextValue();
         const auto airDb = airSmoother.getNextValue();
+        const auto driveForTone = driveSmoother.getCurrentValue();
 
         if (chunkSize > 1)
         {
@@ -113,7 +114,7 @@ void WarmthProcessor::process(juce::AudioBuffer<float>& buffer)
             airSmoother.skip(chunkSize - 1);
         }
 
-        updateFilterCoefficients(highPassHz, warmthDb, presenceDb, airDb);
+        updateFilterCoefficients(highPassHz, warmthDb, presenceDb, airDb, driveForTone);
 
         for (int sample = 0; sample < chunkSize; ++sample)
         {
@@ -168,13 +169,22 @@ void WarmthProcessor::process(juce::AudioBuffer<float>& buffer)
 
 float WarmthProcessor::saturateSample(float sample, float driveAmount) noexcept
 {
-    const auto normalizedDrive = driveAmount / 10.0f;
-    const auto driveGain = 1.0f + normalizedDrive * 6.5f;
-    const auto asymmetry = 0.08f * normalizedDrive;
-    const auto shaped = std::tanh((sample + asymmetry) * driveGain) / std::tanh(driveGain);
+    const auto normalizedDrive = juce::jlimit(0.0f, 1.0f, driveAmount / 10.0f);
 
-    const auto evenHarmonic = 0.045f * normalizedDrive * shaped * shaped;
-    return juce::jlimit(-1.0f, 1.0f, shaped + evenHarmonic);
+    if (normalizedDrive <= 0.0001f)
+        return sample;
+
+    const auto driveGain = 1.0f + normalizedDrive * 2.4f;
+    const auto knee = 1.0f + normalizedDrive * 1.7f;
+    const auto asymmetry = normalizedDrive * (0.035f + normalizedDrive * 0.055f);
+    const auto normalizer = std::tanh(knee);
+    const auto dcOffset = std::tanh(asymmetry * knee) / normalizer;
+    const auto shaped = (std::tanh((sample * driveGain + asymmetry) * knee) / normalizer) - dcOffset;
+    const auto evenHarmonic = 0.055f * normalizedDrive * ((shaped * shaped) - 0.25f);
+    const auto thirdOrderTrim = 0.025f * normalizedDrive * shaped * shaped * shaped;
+    const auto compensation = decibelsToGain(-3.4f * normalizedDrive);
+
+    return juce::jlimit(-1.0f, 1.0f, (shaped + evenHarmonic - thirdOrderTrim) * compensation);
 }
 
 float WarmthProcessor::getVuLevel() const noexcept
@@ -192,30 +202,33 @@ void WarmthProcessor::applyTargetsImmediately()
     airSmoother.setCurrentAndTargetValue(settings.airDb);
     outputGainDbSmoother.setCurrentAndTargetValue(settings.outputGainDb);
     wetMixSmoother.setCurrentAndTargetValue(settings.bypassed ? 0.0f : 1.0f);
-    updateFilterCoefficients(settings.highPassHz, settings.warmthDb, settings.presenceDb, settings.airDb);
+    updateFilterCoefficients(settings.highPassHz, settings.warmthDb, settings.presenceDb, settings.airDb, settings.drive);
 }
 
-void WarmthProcessor::updateFilterCoefficients(float highPassHz, float warmthDb, float presenceDb, float airDb)
+void WarmthProcessor::updateFilterCoefficients(float highPassHz, float warmthDb, float presenceDb, float airDb, float driveAmount)
 {
     const auto cutoff = juce::jlimit(20.0f, 180.0f, highPassHz);
+    const auto normalizedDrive = juce::jlimit(0.0f, 1.0f, driveAmount / 10.0f);
+    const auto effectiveWarmthDb = juce::jlimit(-6.0f, 7.5f, warmthDb + normalizedDrive * 1.2f);
+    const auto effectiveAirDb = juce::jlimit(-8.0f, 6.0f, airDb - normalizedDrive * 1.8f);
     *highPass.state = *Coefficients::makeHighPass(sampleRate, cutoff, 0.7071f);
 
     *lowShelf.state = *Coefficients::makeLowShelf(
         sampleRate,
-        110.0f,
+        105.0f,
         shelfQ(),
-        decibelsToGain(warmthDb));
+        decibelsToGain(effectiveWarmthDb));
 
     *presence.state = *Coefficients::makePeakFilter(
         sampleRate,
-        2800.0f,
-        0.9f,
+        3200.0f,
+        0.72f,
         decibelsToGain(presenceDb));
 
     *highShelf.state = *Coefficients::makeHighShelf(
         sampleRate,
-        11000.0f,
+        10500.0f,
         shelfQ(),
-        decibelsToGain(airDb));
+        decibelsToGain(effectiveAirDb));
 }
 }

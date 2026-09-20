@@ -49,7 +49,7 @@ test:
 
 run:
 	@$(call require_plugin)
-	@$(MAKE) configure BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)'
+	@$(MAKE) configure BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)' VERSION='$(VERSION)'
 	@$(call load_plugin_metadata); \
 	if [ "$$has_standalone" != "1" ]; then \
 		echo "Plugin '$(PLUGIN)' does not define a Standalone target." >&2; \
@@ -60,13 +60,18 @@ run:
 
 validate:
 	@$(call require_plugin)
-	@$(MAKE) configure BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)'
+	@$(MAKE) configure BUILD_DIR='$(BUILD_DIR)' CONFIG='$(CONFIG)' CMAKE_GENERATOR='$(CMAKE_GENERATOR)' JOBS='$(JOBS)' JUCE_DIR='$(JUCE_DIR)' VERSION='$(VERSION)'
 	@$(call load_plugin_metadata); \
 	if [ "$$has_au" != "1" ]; then \
 		echo "Plugin '$(PLUGIN)' does not define an AU target." >&2; \
 		exit 2; \
 	fi; \
 	$(CMAKE) --build '$(ABS_BUILD_DIR)' --target "$$au_target" --parallel '$(JOBS)'; \
+	registration_count="$$(auval -a 2>/dev/null | awk -v type="$$au_main_type" -v subtype="$$plugin_code" -v manufacturer="$$manufacturer_code" '$$1 == type && $$2 == subtype && $$3 == manufacturer { count++ } END { print count + 0 }')"; \
+	if [ "$$registration_count" -ne 1 ]; then \
+		echo "Expected exactly one registered AU for $$au_main_type/$$plugin_code/$$manufacturer_code, found $$registration_count. Remove duplicate user/system installations and refresh AudioComponentRegistrar before trusting validation." >&2; \
+		exit 2; \
+	fi; \
 	auval -v "$$au_main_type" "$$plugin_code" "$$manufacturer_code"
 
 clean:

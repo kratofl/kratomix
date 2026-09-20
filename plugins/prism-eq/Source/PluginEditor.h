@@ -64,9 +64,9 @@ private:
 
     ButtonAttachment bypassAttachment;
     SliderAttachment outputAttachment;
-    ComboBoxAttachment analyzerModeAttachment;
-    ComboBoxAttachment phaseModeAttachment;
-    ComboBoxAttachment qualityModeAttachment;
+    std::unique_ptr<ComboBoxAttachment> analyzerModeAttachment;
+    std::unique_ptr<ComboBoxAttachment> phaseModeAttachment;
+    std::unique_ptr<ComboBoxAttachment> qualityModeAttachment;
     SliderAttachment analyzerSpeedAttachment;
     SliderAttachment analyzerRangeAttachment;
     SliderAttachment gainScaleAttachment;

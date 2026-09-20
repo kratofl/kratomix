@@ -68,6 +68,18 @@ void PrismGraph::attachState(juce::AudioProcessorValueTreeState& stateToUse)
 {
     endDragGesture();
     state = &stateToUse;
+
+    auto initialBand = 0;
+    for (int index = 1; index <= maxBands; ++index)
+    {
+        if (bandEnabled(index))
+        {
+            initialBand = index;
+            break;
+        }
+    }
+
+    setSelectedBand(initialBand);
     repaint();
 }
 

@@ -5,7 +5,6 @@
 #include "ControlValues.h"
 #include "PluginProcessor.h"
 #include "ui/RackLookAndFeel.h"
-#include "ui/SteppedSlider.h"
 #include "ui/VuMeter.h"
 
 namespace kratomix
@@ -33,13 +32,13 @@ private:
     VelvetChannelAudioProcessor& audioProcessor;
     ui::RackLookAndFeel rackLookAndFeel;
 
-    ui::SteppedSlider inputSlider;
-    ui::SteppedSlider driveSlider;
-    ui::SteppedSlider highPassSlider;
-    ui::SteppedSlider warmthSlider;
-    ui::SteppedSlider presenceSlider;
-    ui::SteppedSlider airSlider;
-    ui::SteppedSlider outputSlider;
+    juce::Slider inputSlider;
+    juce::Slider driveSlider;
+    juce::Slider highPassSlider;
+    juce::Slider warmthSlider;
+    juce::Slider presenceSlider;
+    juce::Slider airSlider;
+    juce::Slider outputSlider;
     juce::ToggleButton bypassButton { "BYPASS" };
     ui::VuMeter vuMeter;
 

@@ -12,7 +12,7 @@ namespace kratomix
 PrismEqAudioProcessor::PrismEqAudioProcessor()
     : AudioProcessor(BusesProperties()
           .withInput("Input", juce::AudioChannelSet::stereo(), true)
-          .withInput("Sidechain", juce::AudioChannelSet::stereo(), true)
+          .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)
           .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, stateId, prism::createParameterLayout())
 {
